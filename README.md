@@ -1,2 +1,2 @@
-# Terminal-Intelligence-Agent-TIA-
+# Terminal Intelligence Agent(TIA)
 A terminal agent
