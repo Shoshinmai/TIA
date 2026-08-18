@@ -1,0 +1,16 @@
+.pytest_cache
+__pycache__
+tia-lib
+40.8.0
+critics/__pycache__
+memory/__pycache__
+nodes/__pycache__
+prompts/__pycache__
+result_processing/__pycache__
+result_processing/normalizers/__pycache__
+router/__pycache__
+runtime/__pycache__
+task_executor/__pycache__
+task_plan/__pycache__
+tools/__pycache__
+utils/__pycache__
