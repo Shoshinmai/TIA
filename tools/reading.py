@@ -1,8 +1,8 @@
 from langchain_core.tools import tool
 from datetime import datetime
-from agents.terminal.models import GetFileInfoInput, ReadFileInput
-from agents.terminal.utils.location_resolver import resolve_location
-from agents.terminal.utils.text_helpers import read_lines
+from models import GetFileInfoInput, ReadFileInput
+from utils.location_resolver import resolve_location
+from utils.text_helpers import read_lines
 
 
 @tool(args_schema=ReadFileInput)

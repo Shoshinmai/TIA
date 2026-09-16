@@ -1,11 +1,11 @@
 from typing import List
 
-from agents.terminal.result_processing.models import (
+from result_processing.models import (
     ArtifactAction,
     ArtifactDecision,
     NormalizedResult,
 )
-from agents.terminal.utils.resource_ranker import rank_resources
+from utils.resource_ranker import rank_resources
 
 
 MAX_DISPLAYED_RESOURCES = 10

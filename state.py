@@ -3,8 +3,8 @@ from typing import Annotated, Literal, Optional, TypedDict
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 
-from agents.terminal.critics.integration import CriticRuntimeEvent
-from agents.terminal.models import (
+from critics.integration import CriticRuntimeEvent
+from models import (
     ActiveTaskMemory,
     ArtifactReference,
     EphemeralExecutionState,
@@ -15,10 +15,10 @@ from agents.terminal.models import (
     TaskContext,
     ThreadMemory,
 )
-from agents.terminal.result_processing.models import RuntimeProcessingResult
-from agents.terminal.runtime.models import RuntimeState
-from agents.terminal.task_executor.models import ExecutionWorkflow
-from agents.terminal.task_plan.models import TaskPlan
+from result_processing.models import RuntimeProcessingResult
+from runtime.models import RuntimeState
+from task_executor.models import ExecutionWorkflow
+from task_plan.models import TaskPlan
 
 
 class TerminalState(TypedDict):

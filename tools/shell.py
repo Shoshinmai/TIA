@@ -1,6 +1,6 @@
 from langchain_core.tools import tool
 
-from agents.terminal.tools.command_runner import run_command
+from .command_runner import run_command
 
 
 @tool

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from agents.terminal.state import TerminalState
-from agents.terminal.runtime.modes import RuntimeMode
-from agents.terminal.task_plan.models import (
+from state import TerminalState
+from runtime.modes import RuntimeMode
+from task_plan.models import (
     TaskItemStatus,
     TaskPlanStatus,
 )
-from agents.terminal.task_executor.models import (
+from task_executor.models import (
     WorkflowStatus,
 )
 

@@ -1,11 +1,11 @@
-from agents.terminal.state import TerminalState
+from state import TerminalState
 from llm.llmclient import call_groq, call_ollama
 
-from agents.terminal.models import ObservationSummary, TerminalAction
+from models import ObservationSummary, TerminalAction
 
-from agents.terminal.utils.chunker import chunk_text
+from utils.chunker import chunk_text
 
-from agents.terminal.prompts.compressor_prompt import (
+from prompts.compressor_prompt import (
     TERMINAL_CHUNK_COMPRESSOR_PROMPT,
     TERMINAL_REDUCER_PROMPT,
 )

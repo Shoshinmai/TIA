@@ -3,26 +3,26 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from agents.terminal.models import (
+from models import (
     ActiveTaskMemory,
     ArtifactReference,
     ExecutionMemory,
 )
-from agents.terminal.state import TerminalState
-from agents.terminal.task_executor.models import ExecutionContext
-from agents.terminal.task_plan.manager import TaskPlanManager
-from agents.terminal.task_plan.models import (
+from state import TerminalState
+from task_executor.models import ExecutionContext
+from task_plan.manager import TaskPlanManager
+from task_plan.models import (
     TaskItem,
     TaskItemStatus,
     TaskPlan,
 )
-from agents.terminal.utils.capability_selector import get_candidate_tools
-from agents.terminal.utils.memory_formatter import (
+from utils.capability_selector import get_candidate_tools
+from utils.memory_formatter import (
     format_active_memory,
     format_artifact_catalog,
     format_execution_summary,
 )
-from agents.terminal.utils.tool_prompt_builder import (
+from utils.tool_prompt_builder import (
     build_capability_prompt,
 )
 

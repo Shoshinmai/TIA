@@ -1,6 +1,6 @@
 from langgraph.graph import END
 
-from agents.terminal.state import TerminalState
+from state import TerminalState
 
 
 def safety_router(state: TerminalState):

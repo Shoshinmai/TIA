@@ -1,6 +1,6 @@
 from langchain_core.runnables import RunnableConfig
 
-from agents.terminal.models import (
+from models import (
     ActiveTaskMemory,
     EphemeralExecutionState,
     ExecutionMemory,
@@ -8,8 +8,8 @@ from agents.terminal.models import (
     TaskContext,
     ThreadMemory,
 )
-from agents.terminal.runtime.models import RuntimeState
-from agents.terminal.state import TerminalState
+from runtime.models import RuntimeState
+from state import TerminalState
 
 
 # async def task_initializer_node(

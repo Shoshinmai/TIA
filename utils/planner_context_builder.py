@@ -1,7 +1,7 @@
 from typing import Any
 
-from agents.terminal.state import TerminalState
-from agents.terminal.utils.memory_formatter import (
+from state import TerminalState
+from utils.memory_formatter import (
     format_active_memory,
     format_execution_summary,
     format_task_plan,

@@ -1,5 +1,5 @@
-from agents.terminal.result_processing.models import NormalizedResult
-from agents.terminal.result_processing.registry import (
+from result_processing.models import NormalizedResult
+from result_processing.registry import (
     NORMALIZER_REGISTRY,
 )
 

@@ -1,11 +1,11 @@
 from uuid import uuid4
 
-from agents.terminal.models import (
+from models import (
     PlannerTask,
     TaskPlanningOutput,
 )
-from agents.terminal.task_plan.manager import TaskPlanManager
-from agents.terminal.task_plan.models import (
+from task_plan.manager import TaskPlanManager
+from task_plan.models import (
     TaskItem,
     TaskPlan,
 )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agents.terminal.models import ExecutionMemory, ExecutionAttempt
+from models import ExecutionMemory, ExecutionAttempt
 
 
 def build_evaluator_context(

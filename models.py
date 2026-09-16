@@ -4,7 +4,7 @@ from typing import Any, Literal
 from uuid import uuid4
 from pydantic import BaseModel, Field
 
-from agents.terminal.result_processing.models import ExecutionOutcome, Fact, Resource
+from result_processing.models import ExecutionOutcome, Fact, Resource
 
 
 def utc_now() -> datetime:

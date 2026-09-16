@@ -1,12 +1,12 @@
 from collections.abc import Callable
 from typing import TypeVar
 
-from agents.terminal.result_processing.models import (
+from result_processing.models import (
     Fact,
     MemoryUpdateProposal,
     Resource,
 )
-from agents.terminal.state import TerminalState
+from state import TerminalState
 
 
 T = TypeVar("T")

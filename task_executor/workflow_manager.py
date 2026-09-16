@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agents.terminal.task_executor.models import (
+from task_executor.models import (
     ExecutionStep,
     ExecutionStepStatus,
     ExecutionWorkflow,

@@ -1,10 +1,10 @@
-from agents.terminal.models import (
+from models import (
     ActiveTaskMemory,
     ArtifactReference,
     ExecutionMemory,
     ThreadMemory,
 )
-from agents.terminal.task_plan.models import TaskPlan
+from task_plan.models import TaskPlan
 
 
 def format_runtime_memory(

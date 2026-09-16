@@ -1,11 +1,11 @@
-from agents.terminal.memory import artifact_store
-from agents.terminal.models import PlanningOutput, TaskPlanningOutput
-from agents.terminal.prompts.planner_prompt import TERMINAL_PLANNER_PROMPT
-from agents.terminal.runtime.events import RuntimeEvent
-from agents.terminal.state import TerminalState
-from agents.terminal.task_plan.manager import TaskPlanManager
-from agents.terminal.task_plan.materializer import TaskPlanMaterializer
-from agents.terminal.utils.planner_context_builder import build_planner_context
+from memory import artifact_store
+from models import PlanningOutput, TaskPlanningOutput
+from prompts.planner_prompt import TERMINAL_PLANNER_PROMPT
+from runtime.events import RuntimeEvent
+from state import TerminalState
+from task_plan.manager import TaskPlanManager
+from task_plan.materializer import TaskPlanMaterializer
+from utils.planner_context_builder import build_planner_context
 from llm.llmclient import call_nvidia, call_ollama
 
 
@@ -31,7 +31,8 @@ def terminal_planner_node(state: TerminalState):
     plan = call_nvidia(
         prompt,
         # "nvidia/nemotron-3-ultra-550b-a55b",
-        "nvidia/nemotron-3-super-120b-a12b",
+        # "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia/nemotron-3.5-lightning-30b-a3b",
         subagent=True,
         state_model=TaskPlanningOutput,
     )

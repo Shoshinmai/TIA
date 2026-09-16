@@ -1,4 +1,4 @@
-from agents.terminal.memory.artifact_store import ArtifactStore, Artifact
+from .artifact_store import ArtifactStore, Artifact
 
 import json
 from typing import Any
@@ -201,8 +201,8 @@ class ArtifactRetriever:
 
         if lines_returned > 0:
             end_line = start_line + lines_returned - 1
-        else:
-            end_line = None
+        # else:
+        #     end_line = None
 
         has_more = end_index < len(lines)
 

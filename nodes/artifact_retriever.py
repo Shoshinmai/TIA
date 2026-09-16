@@ -1,6 +1,6 @@
-from agents.terminal.memory.retriever import ArtifactRetriever
+from memory.retriever import ArtifactRetriever
 
-from agents.terminal.state import TerminalState
+from state import TerminalState
 
 
 def artifact_retriever_node(state: TerminalState):

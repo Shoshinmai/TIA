@@ -1,4 +1,4 @@
-from agents.terminal.result_processing.models import (
+from result_processing.models import (
     ArtifactAction,
     ArtifactDecision,
     NormalizedResult,

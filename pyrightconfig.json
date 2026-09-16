@@ -1,0 +1,8 @@
+{
+  "venvPath": ".",
+  "venv": "tia-lib",
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": true,
+  "reportMissingModuleSource": false
+}

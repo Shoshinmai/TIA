@@ -1,4 +1,4 @@
-from agents.terminal.state import TerminalState
+from state import TerminalState
 
 
 MULTI_COMMAND_PATTERNS = ["&&", "||", ";", "|"]

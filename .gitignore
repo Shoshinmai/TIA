@@ -14,3 +14,7 @@ task_executor/__pycache__
 task_plan/__pycache__
 tools/__pycache__
 utils/__pycache__
+.env
+ui/node_modules
+.git
+.vscode

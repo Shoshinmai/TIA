@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from agents.terminal.memory.execution_manager import ExecutionMemoryManager
-from agents.terminal.models import AttemptStatus
-from agents.terminal.result_processing.state_mutator import mutate_state
-from agents.terminal.runtime.events import RuntimeEvent
-from agents.terminal.runtime.kernel import RuntimeKernel
-from agents.terminal.runtime.models import RuntimeDecisionContext
-from agents.terminal.runtime.stages import RuntimeStage
-from agents.terminal.state import TerminalState
-from agents.terminal.task_executor.workflow_runtime import WorkflowRuntime
-from agents.terminal.task_plan.manager import TaskPlanManager
+from memory.execution_manager import ExecutionMemoryManager
+from models import AttemptStatus
+from result_processing.state_mutator import mutate_state
+from runtime.events import RuntimeEvent
+from runtime.kernel import RuntimeKernel
+from runtime.models import RuntimeDecisionContext
+from runtime.stages import RuntimeStage
+from state import TerminalState
+from task_executor.workflow_runtime import WorkflowRuntime
+from task_plan.manager import TaskPlanManager
 
 
 def runtime_planner_result_node(

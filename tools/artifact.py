@@ -1,7 +1,7 @@
 from langchain_core.tools import tool
 
-from agents.terminal.memory import artifact_retriever
-from agents.terminal.models import ReadArtifactInput, SearchArtifactInput
+from memory import artifact_retriever
+from models import ReadArtifactInput, SearchArtifactInput
 
 
 @tool(args_schema=SearchArtifactInput)

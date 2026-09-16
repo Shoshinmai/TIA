@@ -1,10 +1,10 @@
-from agents.terminal.memory.execution_manager import (
+from memory.execution_manager import (
     ExecutionMemoryManager,
 )
-from agents.terminal.models import (
+from models import (
     EphemeralExecutionState,
 )
-from agents.terminal.state import TerminalState
+from state import TerminalState
 
 
 def execution_tracker_node(

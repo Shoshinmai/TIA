@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from agents.terminal.result_processing.models import Resource, ResourceType
+from result_processing.models import Resource, ResourceType
 
 
 # ---------------------------------------------------------

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from agents.terminal.models import (
+from models import (
     AttemptStatus,
     ExecutionAttempt,
     ExecutionMemory,
 )
-from agents.terminal.result_processing.models import (
+from result_processing.models import (
     RuntimeProcessingResult,
 )
 

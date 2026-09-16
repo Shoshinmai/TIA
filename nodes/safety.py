@@ -1,4 +1,4 @@
-from agents.terminal.state import TerminalState
+from state import TerminalState
 
 
 BLOCKED_PATTERNS = [

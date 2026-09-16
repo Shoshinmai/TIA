@@ -1,9 +1,9 @@
 from collections.abc import Callable
-from agents.terminal.result_processing.models import NormalizedResult
-from agents.terminal.result_processing.normalizers.execution import (
+from result_processing.models import NormalizedResult
+from result_processing.normalizers.execution import (
     normalize_run_terminal,
 )
-from agents.terminal.result_processing.normalizers.filesystem import (
+from result_processing.normalizers.filesystem import (
     normalize_list_directory,
     normalize_search_files,
     normalize_search_content,
@@ -11,7 +11,7 @@ from agents.terminal.result_processing.normalizers.filesystem import (
     normalize_get_file_info,
 )
 
-from agents.terminal.result_processing.normalizers.artifact import (
+from result_processing.normalizers.artifact import (
     normalize_search_artifact,
     normalize_read_artifact,
 )

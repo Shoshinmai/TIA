@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from agents.terminal.runtime.modes import RuntimeMode
-from agents.terminal.runtime.stages import RuntimeStage
+from runtime.modes import RuntimeMode
+from runtime.stages import RuntimeStage
 
 
 class InvalidRuntimeDispatch(RuntimeError):

@@ -1,14 +1,14 @@
-from agents.terminal.memory import artifact_store
-from agents.terminal.memory.execution_manager import (
+from memory import artifact_store
+from memory.execution_manager import (
     ExecutionMemoryManager,
 )
-from agents.terminal.result_processing.models import (
+from result_processing.models import (
     ArtifactAction,
 )
-from agents.terminal.result_processing.state_mutator import (
+from result_processing.state_mutator import (
     mutate_state,
 )
-from agents.terminal.state import TerminalState
+from state import TerminalState
 
 
 def observation_manager_node(

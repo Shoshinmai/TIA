@@ -2,10 +2,10 @@ import json
 
 from langchain_core.messages import ToolMessage
 
-from agents.terminal.memory.execution_manager import ExecutionMemoryManager
-from agents.terminal.state import TerminalState
-from agents.terminal.models import ObservationInput
-from agents.terminal.result_processing.processor import (
+from memory.execution_manager import ExecutionMemoryManager
+from state import TerminalState
+from models import ObservationInput
+from result_processing.processor import (
     process_tool_result,
 )
 

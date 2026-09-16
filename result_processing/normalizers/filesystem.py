@@ -1,4 +1,4 @@
-from agents.terminal.result_processing.models import (
+from result_processing.models import (
     ArtifactCandidate,
     ExecutionOutcome,
     Fact,
@@ -299,7 +299,7 @@ def normalize_search_content(
         artifact=artifact,
     )
 
-from agents.terminal.result_processing.models import (
+from result_processing.models import (
     Fact,
     Resource,
     ResourceType,

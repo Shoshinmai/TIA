@@ -1,14 +1,14 @@
 from pydantic import BaseModel
 
-from agents.terminal.critics.models import (
+from critics.models import (
     CriticOutput,
 )
 
-from agents.terminal.runtime.events import (
+from runtime.events import (
     RuntimeEvent,
 )
 
-from agents.terminal.runtime.models import (
+from runtime.models import (
     RuntimeDecisionContext,
     RuntimeEvidence,
 )

@@ -1,6 +1,6 @@
 import uuid
 
-from agents.terminal.memory.artifact import Artifact
+from .artifact import Artifact
 
 
 class ArtifactStore:

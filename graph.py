@@ -1,28 +1,28 @@
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, END
-from agents.terminal.nodes.execution_tracker import execution_tracker_node
-from agents.terminal.nodes.task_initializer import task_initializer_node
-from agents.terminal.memory.observation_manager import observation_manager_node
+from nodes.execution_tracker import execution_tracker_node
+from nodes.task_initializer import task_initializer_node
+from memory.observation_manager import observation_manager_node
 
-# from agents.terminal.nodes.compressor import terminal_compressor_node
-from agents.terminal.nodes.evaluator import terminal_evaluator_node
-from agents.terminal.nodes.artifact_retriever import artifact_retriever_node
-from agents.terminal.nodes.message_adapter import message_adapter_node
-from agents.terminal.nodes.planner import terminal_planner_node
-from agents.terminal.nodes.tool_compiler import terminal_tool_selector_node
-from agents.terminal.nodes.validator import command_validator_node
-from agents.terminal.router.evaluator_router import evaluator_router
-from agents.terminal.router.safety_router import safety_router
-from agents.terminal.router.validator_router import validator_router
-from agents.terminal.state import TerminalState
+# from nodes.compressor import terminal_compressor_node
+from nodes.evaluator import terminal_evaluator_node
+from nodes.artifact_retriever import artifact_retriever_node
+from nodes.message_adapter import message_adapter_node
+from nodes.planner import terminal_planner_node
+from nodes.tool_compiler import terminal_tool_selector_node
+from nodes.validator import command_validator_node
+from router.evaluator_router import evaluator_router
+from router.safety_router import safety_router
+from router.validator_router import validator_router
+from state import TerminalState
 from langgraph.prebuilt import ToolNode
-from agents.terminal.tools import TOOLS
+from tools import TOOLS
 
-# from agents.terminal.nodes.reasoner import terminal_reasoner_node
+# from nodes.reasoner import terminal_reasoner_node
 
-from agents.terminal.nodes.safety import safety_filter_node
+from nodes.safety import safety_filter_node
 
-from agents.terminal.nodes.observer import terminal_observer_node
+from nodes.observer import terminal_observer_node
 
 checkpointer = MemorySaver()
 

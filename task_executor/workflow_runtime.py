@@ -3,16 +3,16 @@ from __future__ import annotations
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.prebuilt import ToolNode
 
-from agents.terminal.nodes.tool_compiler import (
+from nodes.tool_compiler import (
     compile_execution_step,
 )
-from agents.terminal.task_executor.models import (
+from task_executor.models import (
     ExecutionWorkflow,
 )
-from agents.terminal.task_executor.workflow_manager import (
+from task_executor.workflow_manager import (
     WorkflowManager,
 )
-from agents.terminal.tools import TOOLS
+from tools import TOOLS
 
 
 class WorkflowRuntime:

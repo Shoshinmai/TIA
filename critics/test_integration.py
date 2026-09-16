@@ -1,20 +1,20 @@
 import pytest
 
-from agents.terminal.critics.integration import (
+from critics.integration import (
     critic_output_to_runtime_event,
     build_critic_runtime_event,
 )
 
-from agents.terminal.critics.models import (
+from critics.models import (
     CriticDecision,
     CriticEvidence,
     CriticOutput,
 )
 
-from agents.terminal.runtime.events import RuntimeEvent
-from agents.terminal.runtime.kernel import RuntimeKernel
-from agents.terminal.runtime.models import RuntimeState
-from agents.terminal.runtime.modes import RuntimeMode
+from runtime.events import RuntimeEvent
+from runtime.kernel import RuntimeKernel
+from runtime.models import RuntimeState
+from runtime.modes import RuntimeMode
 
 
 @pytest.fixture

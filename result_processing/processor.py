@@ -1,20 +1,20 @@
-from agents.terminal.result_processing.memory_condenser import condense_memory
-from agents.terminal.result_processing.models import RuntimeProcessingResult
-from agents.terminal.state import TerminalState
+from result_processing.memory_condenser import condense_memory
+from result_processing.models import RuntimeProcessingResult
+from state import TerminalState
 
-from agents.terminal.result_processing.normalizer import (
+from result_processing.normalizer import (
     normalize_result,
 )
 
-from agents.terminal.result_processing.artifact_policy import (
+from result_processing.artifact_policy import (
     evaluate_artifact_candidate,
 )
 
-from agents.terminal.result_processing.state_mutator import (
+from result_processing.state_mutator import (
     mutate_state,
 )
-from agents.terminal.utils.memory_formatter import format_active_memory
-from agents.terminal.utils.normalized_result_formatter import format_normalized_result
+from utils.memory_formatter import format_active_memory
+from utils.normalized_result_formatter import format_normalized_result
 
 
 def process_tool_result(

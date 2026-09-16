@@ -1,6 +1,6 @@
 from langgraph.graph import END
 
-from agents.terminal.state import TerminalState
+from state import TerminalState
 
 
 # MAX_STEPS = 8

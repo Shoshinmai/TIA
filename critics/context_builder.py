@@ -1,15 +1,15 @@
 from typing import Any
 
-from agents.terminal.critics.models import CriticContext
+from critics.models import CriticContext
 
-from agents.terminal.runtime.events import RuntimeEvent
-from agents.terminal.state import TerminalState
-from agents.terminal.task_plan.manager import (
+from runtime.events import RuntimeEvent
+from state import TerminalState
+from task_plan.manager import (
     TaskPlanManager,
 )
 
-from agents.terminal.task_plan.models import TaskPlan
-from agents.terminal.utils.memory_formatter import (
+from task_plan.models import TaskPlan
+from utils.memory_formatter import (
     format_active_memory,
     format_artifact_catalog,
     format_execution_summary,

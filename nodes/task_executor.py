@@ -1,12 +1,12 @@
-from agents.terminal.state import TerminalState
-from agents.terminal.task_executor.models import ExecutorOutput
-from agents.terminal.task_executor.context_builder import (
+from state import TerminalState
+from task_executor.models import ExecutorOutput
+from task_executor.context_builder import (
     build_execution_context,
 )
-from agents.terminal.prompts.executor_prompt import (
+from prompts.executor_prompt import (
     TERMINAL_EXECUTOR_PROMPT,
 )
-from agents.terminal.task_plan.manager import TaskPlanManager
+from task_plan.manager import TaskPlanManager
 from llm.llmclient import call_nvidia, call_ollama
 
 

@@ -1,6 +1,6 @@
 from langchain_core.tools import BaseTool
 
-from agents.terminal.tools import TOOLS
+from tools import TOOLS
 
 
 def get_candidate_tools(

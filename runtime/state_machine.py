@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agents.terminal.runtime.events import RuntimeEvent
-from agents.terminal.runtime.modes import RuntimeMode
+from runtime.events import RuntimeEvent
+from runtime.modes import RuntimeMode
 
 
 @dataclass(frozen=True, slots=True)

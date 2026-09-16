@@ -6,10 +6,10 @@ import subprocess
 import shlex
 from langchain_core.tools import tool
 
-from agents.terminal.models import ListDirectoryInput, SearchContentInput
-from agents.terminal.utils.location_resolver import resolve_location
-from agents.terminal.utils.filesystem_helpers import safe_walk
-from agents.terminal.utils.text_helpers import (
+from models import ListDirectoryInput, SearchContentInput
+from utils.location_resolver import resolve_location
+from utils.filesystem_helpers import safe_walk
+from utils.text_helpers import (
     find_search_backend,
     safe_read_text,
     is_binary_file,

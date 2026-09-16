@@ -3,28 +3,28 @@ from __future__ import annotations
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
-from agents.terminal.nodes.critics import (
+from nodes.critics import (
     terminal_critic_node,
 )
-from agents.terminal.nodes.execution_tracker import execution_tracker_node
-from agents.terminal.nodes.message_adapter import (
+from nodes.execution_tracker import execution_tracker_node
+from nodes.message_adapter import (
     message_adapter_node,
 )
-from agents.terminal.nodes.planner import (
+from nodes.planner import (
     terminal_planner_node,
 )
-from agents.terminal.nodes.task_executor import (
+from nodes.task_executor import (
     terminal_task_executor_node,
 )
-from agents.terminal.nodes.task_initializer import (
+from nodes.task_initializer import (
     task_initializer_node,
 )
 
-from agents.terminal.runtime.consistency import (
+from runtime.consistency import (
     validate_runtime_consistency,
 )
 
-from agents.terminal.runtime.nodes import (
+from runtime.nodes import (
     execution_memory_finalize_node,
     runtime_critic_result_node,
     runtime_initialization_node,
@@ -34,11 +34,11 @@ from agents.terminal.runtime.nodes import (
     runtime_workflow_execution_node,
 )
 
-from agents.terminal.runtime.stages import (
+from runtime.stages import (
     RuntimeStage,
 )
 
-from agents.terminal.state import (
+from state import (
     TerminalState,
 )
 

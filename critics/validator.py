@@ -1,4 +1,4 @@
-from agents.terminal.critics.models import CriticOutput
+from critics.models import CriticOutput
 
 
 def validate_critic_output(

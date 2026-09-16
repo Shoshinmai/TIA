@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from uuid import uuid4
-from agents.terminal.task_plan.models import (
+from task_plan.models import (
     TaskItemStatus,
     TaskPlanStatus,
     TaskPlan,

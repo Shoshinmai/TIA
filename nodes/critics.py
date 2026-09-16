@@ -1,10 +1,10 @@
-from agents.terminal.critics.context_builder import (
+from critics.context_builder import (
     build_critic_context,
 )
-from agents.terminal.critics.integration import build_critic_runtime_event
-from agents.terminal.critics.models import CriticOutput
-from agents.terminal.critics.validator import validate_critic_output
-from agents.terminal.prompts.critics_prompt import TERMINAL_CRITIC_PROMPT
+from critics.integration import build_critic_runtime_event
+from critics.models import CriticOutput
+from critics.validator import validate_critic_output
+from prompts.critics_prompt import TERMINAL_CRITIC_PROMPT
 from llm.llmclient import call_nvidia
 
 
@@ -28,9 +28,9 @@ def terminal_critic_node(state):
 
     critic_output = call_nvidia(
         prompt,
-        # "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia/nemotron-3-super-120b-a12b",
         # "nvidia/nemotron-3-ultra-550b-a55b",
-        "openai/gpt-oss-20b",
+        # "openai/gpt-oss-20b",
         subagent=True,
         state_model=CriticOutput,
     )

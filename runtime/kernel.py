@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from agents.terminal.runtime.dispatcher import RuntimeDispatcher
-from agents.terminal.runtime.events import RuntimeEvent
-from agents.terminal.runtime.models import (
+from runtime.dispatcher import RuntimeDispatcher
+from runtime.events import RuntimeEvent
+from runtime.models import (
     RuntimeDecisionContext,
     RuntimeEvidence,
     RuntimeState,
 )
-from agents.terminal.runtime.modes import RuntimeMode
-from agents.terminal.runtime.stages import RuntimeStage
-from agents.terminal.runtime.state_machine import RuntimeStateMachine
+from runtime.modes import RuntimeMode
+from runtime.stages import RuntimeStage
+from runtime.state_machine import RuntimeStateMachine
 
 
 class RuntimeKernel:

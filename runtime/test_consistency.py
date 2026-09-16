@@ -1,8 +1,8 @@
-from agents.terminal.task_executor.models import ExecutionStep, ExecutionStepStatus, ExecutionWorkflow, WorkflowStatus
-from agents.terminal.runtime.consistency import validate_runtime_consistency
-from agents.terminal.runtime.models import RuntimeState
-from agents.terminal.runtime.modes import RuntimeMode
-from agents.terminal.task_plan.models import TaskItem, TaskItemStatus, TaskPlan, TaskPlanStatus
+from task_executor.models import ExecutionStep, ExecutionStepStatus, ExecutionWorkflow, WorkflowStatus
+from runtime.consistency import validate_runtime_consistency
+from runtime.models import RuntimeState
+from runtime.modes import RuntimeMode
+from task_plan.models import TaskItem, TaskItemStatus, TaskPlan, TaskPlanStatus
 import pytest
 
 

@@ -1,9 +1,9 @@
-from agents.terminal.models import EvaluatorDecision
+from models import EvaluatorDecision
 import json
-from agents.terminal.prompts.evaluator_prompt import TERMINAL_EVALUATOR_PROMPT
-from agents.terminal.state import TerminalState
-from agents.terminal.utils.evaluator_context_builder import build_evaluator_context
-from agents.terminal.utils.evaluator_observation_builder import (
+from prompts.evaluator_prompt import TERMINAL_EVALUATOR_PROMPT
+from state import TerminalState
+from utils.evaluator_context_builder import build_evaluator_context
+from utils.evaluator_observation_builder import (
     build_evaluator_observation,
 )
 from llm.llmclient import call_groq, call_ollama

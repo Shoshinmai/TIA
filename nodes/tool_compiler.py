@@ -6,8 +6,8 @@ from uuid import uuid4
 from langchain_core.messages import AIMessage
 from langchain_core.tools import BaseTool
 
-from agents.terminal.task_executor.models import ExecutionStep
-from agents.terminal.tools import TOOLS
+from task_executor.models import ExecutionStep
+from tools import TOOLS
 
 
 def compile_execution_step(

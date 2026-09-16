@@ -1,5 +1,5 @@
-from agents.terminal.prompts.memory_condenser_prompt import MEMORY_CONDENSER_PROMPT
-from agents.terminal.result_processing.models import (
+from prompts.memory_condenser_prompt import MEMORY_CONDENSER_PROMPT
+from result_processing.models import (
     MemoryUpdateProposal,
 )
 from llm.llmclient import call_nvidia, call_ollama
