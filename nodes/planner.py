@@ -9,7 +9,7 @@ from utils.planner_context_builder import build_planner_context
 from llm.llmclient import call_nvidia, call_ollama
 
 
-def terminal_planner_node(state: TerminalState):
+async def terminal_planner_node(state: TerminalState):
 
     planner_context = build_planner_context(
         state=state,
@@ -20,19 +20,20 @@ def terminal_planner_node(state: TerminalState):
 
     prompt = TERMINAL_PLANNER_PROMPT.format(**planner_context)
 
-    # plan = call_ollama(
+    # plan = await call_ollama(
     #     prompt=prompt,
-    #     model="deepseek-r1:8b",
+    #     # model="deepseek-r1:8b",
     #     # model="qwen2.5-coder:7b",
-    #     # model="freehuntx/qwen3-coder:8b ",
+    #     model="freehuntx/qwen3-coder:8b ",
     #     subagent=True,
     #     state_model=TaskPlanningOutput,
     # )
-    plan = call_nvidia(
+    plan = await call_nvidia(
         prompt,
         # "nvidia/nemotron-3-ultra-550b-a55b",
-        # "nvidia/nemotron-3-super-120b-a12b",
         "nvidia/nemotron-3.5-lightning-30b-a3b",
+        # "moonshotai/kimi-k3",
+        # "nvidia/nemotron-3-super-120b-a12b",
         subagent=True,
         state_model=TaskPlanningOutput,
     )
@@ -93,6 +94,9 @@ def terminal_planner_node(state: TerminalState):
 
     print("\n========== TASK PLANNER ==========")
     print(task_plan.model_dump())
+    for i, task in enumerate(getattr(state.get("task_plan"), "tasks", [])):
+    # Accessing directly as attributes:
+        print(f"\n[TASK-{i+1}] --> {task.objective} : (STATUS -> {task.status})")
 
     return {
         "task_plan": task_plan,

@@ -17,6 +17,7 @@ from models import (
 )
 from result_processing.models import RuntimeProcessingResult
 from runtime.models import RuntimeState
+from runtime.plan_execution_outcome import PlanExecutionOutcome
 from task_executor.models import ExecutionWorkflow
 from task_plan.models import TaskPlan
 
@@ -37,13 +38,17 @@ class TerminalState(TypedDict):
 
     thread_memory: ThreadMemory
 
-    persistent_memory: PersistentMemory
+    persistent_memory: PersistentMemory 
 
     ephemeral_execution_state: EphemeralExecutionState
     
     runtime_state: RuntimeState
+
+    concurrent_execution: bool
     
     task_plan: TaskPlan | None
+    
+    plan_execution_outcome: PlanExecutionOutcome | None
     
     execution_workflow: ExecutionWorkflow | None
     

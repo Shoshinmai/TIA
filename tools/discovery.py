@@ -1,89 +1,43 @@
+from __future__ import annotations
+
+import asyncio
 import json
 import shutil
-import string
-from pathlib import Path
 import subprocess
-import shlex
+from pathlib import Path
+
 from langchain_core.tools import tool
 
-from models import ListDirectoryInput, SearchContentInput
-from utils.location_resolver import resolve_location
+from models import (
+    ListDirectoryInput,
+    SearchContentInput,
+)
 from utils.filesystem_helpers import safe_walk
+from utils.location_resolver import resolve_location
 from utils.text_helpers import (
     find_search_backend,
-    safe_read_text,
     is_binary_file,
 )
-
-# from .terminal.utils.location_resolver import resolve_location
 
 
 MAX_RESULTS = 100
 MAX_DIRECTORY_RESULTS = 500
 
 
-@tool
-def search_files(
+def _search_files_sync(
     query: str,
     location: str = "current directory",
     recursive: bool = True,
     case_sensitive: bool = False,
 ) -> dict:
     """
-    PURPOSE
-    -------
-    Locate files when their exact location is unknown.
-
-    This capability searches for files by filename or filename pattern
-    within a specified location.
-
-    Use this capability before attempting to read or modify a file whose
-    location is not yet known.
-
-    TYPICAL USE CASES
-    -----------------
-    - Find a file by name.
-    - Locate source code files.
-    - Search for configuration files.
-    - Locate logs or reports.
-
-    USE THIS CAPABILITY WHEN
-    ------------------------
-    - The user knows the filename but not its location.
-    - A file must be located before reading or editing.
-    - Searching by filename is sufficient.
-
-    DO NOT USE THIS CAPABILITY WHEN
-    -------------------------------
-    - Exploring an unknown directory structure.
-      Use list_directory.
-
-    - Searching inside file contents.
-      Use search_content.
-
-    - Reading a file.
-      Use read_file.
-
-    - Executing shell commands.
-      Use run_terminal only if no specialized capability applies.
-
-    IMPORTANT
-    ---------
-    Repeating this capability with only minor changes to the search
-    query is usually not a new strategy.
-
-    If previous searches have clearly failed, consider another
-    capability instead.
-
-    Returns
-    -------
-    Structured search results containing matched files and metadata.
+    Synchronous implementation of search_files.
     """
-    # search_files.category = "Discovery"
 
     try:
         root_path = resolve_location(location)
-    except ValueError as e:
+
+    except ValueError as exc:
         return {
             "success": False,
             "query": query,
@@ -91,27 +45,41 @@ def search_files(
             "count": 0,
             "matches": [],
             "truncated": False,
-            "error": str(e),
+            "error": str(exc),
         }
-    max_results = MAX_RESULTS
 
     matches = []
 
     try:
-        iterator = root_path.rglob("*") if recursive else root_path.glob("*")
+        iterator = (
+            root_path.rglob("*")
+            if recursive
+            else root_path.glob("*")
+        )
+
+        search_query = (
+            query
+            if case_sensitive
+            else query.lower()
+        )
 
         for path in iterator:
 
             if not path.is_file():
                 continue
 
-            filename = path.name if case_sensitive else path.name.lower()
-            search_query = query if case_sensitive else query.lower()
+            filename = (
+                path.name
+                if case_sensitive
+                else path.name.lower()
+            )
 
             if search_query in filename:
-                matches.append(str(path.resolve()))
+                matches.append(
+                    str(path.resolve())
+                )
 
-                if len(matches) >= max_results:
+                if len(matches) >= MAX_RESULTS:
                     break
 
         return {
@@ -120,107 +88,55 @@ def search_files(
             "root": str(root_path.resolve()),
             "count": len(matches),
             "matches": matches,
-            "truncated": len(matches) >= max_results,
+            "truncated": len(matches) >= MAX_RESULTS,
         }
 
-    except Exception as e:
-
+    except Exception as exc:
         return {
             "success": False,
-            "error": str(e),
+            "error": str(exc),
             "query": query,
         }
 
 
-@tool(args_schema=ListDirectoryInput)
-def list_directory(
+@tool
+async def search_files(
+    query: str,
+    location: str = "current directory",
+    recursive: bool = True,
+    case_sensitive: bool = False,
+) -> dict:
+    """
+    Locate files asynchronously when their exact location is unknown.
+    """
+
+    return await asyncio.to_thread(
+        _search_files_sync,
+        query,
+        location,
+        recursive,
+        case_sensitive,
+    )
+
+
+def _list_directory_sync(
     location: str = "current directory",
     recursive: bool = False,
     include_hidden: bool = False,
     max_depth: int = 2,
 ) -> dict:
     """
-    PURPOSE
-    -------
-    Inspect the structure and contents of a directory.
-
-    This capability helps the planner understand how files
-    and folders are organized before selecting files to read
-    or modify.
-
-    TYPICAL USE CASES
-    -----------------
-    - Explore a project.
-    - Inspect an unfamiliar folder.
-    - Locate configuration directories.
-    - Understand repository layout.
-    - Count files and folders.
-
-    USE THIS CAPABILITY WHEN
-    ------------------------
-    - The directory structure is unknown.
-    - The planner needs to discover where files are located.
-    - Browsing folders is more appropriate than searching by filename.
-
-    DO NOT USE THIS CAPABILITY WHEN
-    -------------------------------
-    - Searching for a known filename.
-      Use search_files.
-
-    - Reading file contents.
-      Use read_file.
-
-    - Searching inside files.
-      Use search_content.
-
-    - Executing shell commands.
-      Use run_terminal only if no specialized capability applies.
-
-    IMPORTANT
-    ---------
-    Directory exploration should normally precede reading
-    or modifying files in unfamiliar locations.
-    Maximum traversal depth is controlled by the max_depth argument.
-
-    Returns
-    -------
-    Structured directory information including folders,
-    files, summary counts, and traversal metadata.
+    Synchronous implementation of list_directory.
     """
 
-    #     list_directory.category = "Discovery"
-    #     list_directory.return_description = """
-    # Returns:
-
-    # - success
-    # - resolved_path
-    # - directories
-    # - files
-    # - total_directories
-    # - total_files
-    # - recursive
-    # - truncated
-    # """
-    #     list_directory.usage_notes = """
-    # Use this capability to inspect a directory.
-
-    # Do not use it to locate files by name.
-
-    # Use search_files instead.
-
-    # Do not use it to read files.
-
-    # Use read_file instead.
-    # """
     try:
         root_path = resolve_location(location)
 
-    except ValueError as e:
-
+    except ValueError as exc:
         return {
             "success": False,
             "location": location,
-            "error": str(e),
+            "error": str(exc),
         }
 
     directories = []
@@ -238,29 +154,34 @@ def list_directory(
         relative = entry.relative_to(root_path)
 
         if entry.is_dir():
-
-            directories.append(str(relative))
+            directories.append(
+                str(relative)
+            )
             total_directories += 1
 
         else:
-
-            files.append(str(relative))
+            files.append(
+                str(relative)
+            )
             total_files += 1
 
     truncated = False
 
     if len(directories) > MAX_DIRECTORY_RESULTS:
-
-        directories = directories[:MAX_DIRECTORY_RESULTS]
+        directories = directories[
+            :MAX_DIRECTORY_RESULTS
+        ]
         truncated = True
 
-    remaining = MAX_DIRECTORY_RESULTS - len(directories)
+    remaining = (
+        MAX_DIRECTORY_RESULTS
+        - len(directories)
+    )
 
     if remaining < 0:
         remaining = 0
 
     if len(files) > remaining:
-
         files = files[:remaining]
         truncated = True
 
@@ -277,8 +198,27 @@ def list_directory(
     }
 
 
-@tool(args_schema=SearchContentInput)
-def search_content(
+@tool(args_schema=ListDirectoryInput)
+async def list_directory(
+    location: str = "current directory",
+    recursive: bool = False,
+    include_hidden: bool = False,
+    max_depth: int = 2,
+) -> dict:
+    """
+    Inspect a directory asynchronously.
+    """
+
+    return await asyncio.to_thread(
+        _list_directory_sync,
+        location,
+        recursive,
+        include_hidden,
+        max_depth,
+    )
+
+
+def _search_content_sync(
     query: str,
     location: str = "current directory",
     file_pattern: str = "*",
@@ -286,63 +226,22 @@ def search_content(
     max_results: int = 50,
 ) -> dict:
     """
-    PURPOSE
-    -------
-    Locate files by searching inside their contents.
+    Synchronous implementation of search_content.
 
-    This capability searches text contained within files rather
-    than searching filenames.
-
-    TYPICAL USE CASES
-    -----------------
-    - Find a function definition.
-    - Locate configuration values.
-    - Search for error messages.
-    - Locate TODO comments.
-    - Find class names.
-    - Search log files.
-
-    USE THIS CAPABILITY WHEN
-    ------------------------
-    - The filename is unknown.
-    - The user knows text contained inside a file.
-    - Searching by file contents is appropriate.
-
-    DO NOT USE THIS CAPABILITY WHEN
-    -------------------------------
-    - Searching for filenames.
-      Use search_files.
-
-    - Browsing directory structures.
-      Use list_directory.
-
-    - Reading a file.
-      Use read_file.
-
-    - Executing shell commands.
-      Use run_terminal only if no specialized capability applies.
-
-    IMPORTANT
-    ---------
-    Search results should contain matching files, line numbers,
-    and small snippets that help identify relevant results.
-    It is mandatory to give file pattern.
-    It is mandatory to give location.
-
-    Returns
-    -------
-    Structured content search results and search metadata.
+    Both the Python filesystem backend and the ripgrep backend
+    remain unchanged. The entire operation is moved out of the
+    event loop by the async wrapper.
     """
 
     try:
         root_path = resolve_location(location)
 
-    except ValueError as e:
+    except ValueError as exc:
         return {
             "success": False,
             "query": query,
             "location": location,
-            "error": str(e),
+            "error": str(exc),
         }
 
     backend = find_search_backend()
@@ -356,21 +255,34 @@ def search_content(
             max_results=max_results,
         )
 
-    # if backend == "grep":
-    #     return _search_with_grep(
-    #         query=query,
-    #         root=root_path,
-    #         file_pattern=file_pattern,
-    #         case_sensitive=case_sensitive,
-    #         max_results=max_results,
-    #     )
-
     return _search_with_python(
         query=query,
         root=root_path,
         file_pattern=file_pattern,
         case_sensitive=case_sensitive,
         max_results=max_results,
+    )
+
+
+@tool(args_schema=SearchContentInput)
+async def search_content(
+    query: str,
+    location: str = "current directory",
+    file_pattern: str = "*",
+    case_sensitive: bool = False,
+    max_results: int = 50,
+) -> dict:
+    """
+    Search file contents asynchronously.
+    """
+
+    return await asyncio.to_thread(
+        _search_content_sync,
+        query,
+        location,
+        file_pattern,
+        case_sensitive,
+        max_results,
     )
 
 
@@ -381,14 +293,19 @@ def _search_with_ripgrep(
     case_sensitive: bool,
     max_results: int,
 ) -> dict:
+
     if shutil.which("rg") is None:
         return {
             "success": False,
             "query": query,
             "backend": "ripgrep",
             "root": str(root),
-            "error": "Ripgrep is not installed or is not available on PATH.",
+            "error": (
+                "Ripgrep is not installed or "
+                "is not available on PATH."
+            ),
         }
+
     command = [
         "rg",
         "--json",
@@ -409,10 +326,26 @@ def _search_with_ripgrep(
             text=True,
             timeout=30,
         )
-        print("COMMAND:", command)
-        print("RETURN CODE:", result.returncode)
-        print("STDOUT:", repr(result.stdout[:2000]))
-        print("STDERR:", repr(result.stderr))
+
+        print(
+            "COMMAND:",
+            command,
+        )
+
+        print(
+            "RETURN CODE:",
+            result.returncode,
+        )
+
+        print(
+            "STDOUT:",
+            repr(result.stdout[:2000]),
+        )
+
+        print(
+            "STDERR:",
+            repr(result.stderr),
+        )
 
     except subprocess.TimeoutExpired:
         return {
@@ -430,14 +363,21 @@ def _search_with_ripgrep(
             "error": str(exc),
         }
 
-    if result.returncode not in (0, 1) or result.stderr.strip():
+    if (
+        result.returncode not in (0, 1)
+        or result.stderr.strip()
+    ):
         return {
             "success": False,
             "query": query,
             "backend": "ripgrep",
             "root": str(root),
-            "error": result.stderr.strip() or (
-                f"Ripgrep failed with return code {result.returncode}."
+            "error": (
+                result.stderr.strip()
+                or (
+                    "Ripgrep failed with return code "
+                    f"{result.returncode}."
+                )
             ),
         }
 
@@ -448,21 +388,42 @@ def _search_with_ripgrep(
 
         try:
             event = json.loads(output_line)
+
         except json.JSONDecodeError:
             continue
 
         if event.get("type") != "match":
             continue
 
-        data = event.get("data", {})
+        data = event.get(
+            "data",
+            {},
+        )
 
-        path_data = data.get("path", {})
-        lines_data = data.get("lines", {})
-        submatches = data.get("submatches", [])
+        path_data = data.get(
+            "path",
+            {},
+        )
+
+        lines_data = data.get(
+            "lines",
+            {},
+        )
+
+        submatches = data.get(
+            "submatches",
+            [],
+        )
 
         file_path = path_data.get("text")
-        snippet = lines_data.get("text", "").rstrip("\r\n")
-        line_number = data.get("line_number")
+        snippet = lines_data.get(
+            "text",
+            "",
+        ).rstrip("\r\n")
+
+        line_number = data.get(
+            "line_number",
+        )
 
         if not file_path:
             continue
@@ -470,7 +431,9 @@ def _search_with_ripgrep(
         column = None
 
         if submatches:
-            column = submatches[0].get("start")
+            column = submatches[0].get(
+                "start",
+            )
 
             if column is not None:
                 column += 1
@@ -487,6 +450,7 @@ def _search_with_ripgrep(
                 "snippet": snippet,
             }
         )
+
     return {
         "success": True,
         "query": query,
@@ -496,16 +460,6 @@ def _search_with_ripgrep(
         "matches": matches,
         "truncated": truncated,
     }
-
-
-def _search_with_grep(
-    query: str,
-    root: Path,
-    file_pattern: str,
-    case_sensitive: bool,
-    max_results: int,
-) -> dict:
-    raise NotImplementedError
 
 
 def _search_with_python(
@@ -519,7 +473,11 @@ def _search_with_python(
     matches = []
     truncated = False
 
-    search_query = query if case_sensitive else query.lower()
+    search_query = (
+        query
+        if case_sensitive
+        else query.lower()
+    )
 
     try:
         for path in safe_walk(
@@ -544,29 +502,52 @@ def _search_with_python(
                     errors="replace",
                 ) as file:
 
-                    for line_number, line in enumerate(file, start=1):
+                    for line_number, line in enumerate(
+                        file,
+                        start=1,
+                    ):
+                        searchable_line = (
+                            line
+                            if case_sensitive
+                            else line.lower()
+                        )
 
-                        searchable_line = line if case_sensitive else line.lower()
-
-                        if search_query not in searchable_line:
+                        if (
+                            search_query
+                            not in searchable_line
+                        ):
                             continue
 
-                        if len(matches) >= max_results:
+                        if (
+                            len(matches)
+                            >= max_results
+                        ):
                             truncated = True
                             break
 
-                        column = searchable_line.find(search_query) + 1
+                        column = (
+                            searchable_line.find(
+                                search_query
+                            )
+                            + 1
+                        )
 
                         matches.append(
                             {
                                 "file": str(path),
                                 "line": line_number,
                                 "column": column,
-                                "snippet": line.rstrip("\r\n"),
+                                "snippet": line.rstrip(
+                                    "\r\n"
+                                ),
                             }
                         )
 
-            except (PermissionError, OSError, UnicodeError):
+            except (
+                PermissionError,
+                OSError,
+                UnicodeError,
+            ):
                 continue
 
             if truncated:
@@ -590,6 +571,3 @@ def _search_with_python(
         "matches": matches,
         "truncated": truncated,
     }
-
-
-# print(search_files.invoke({"query": "main.py"}))

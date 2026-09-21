@@ -1,5 +1,12 @@
-from result_processing.memory_condenser import condense_memory
-from result_processing.models import RuntimeProcessingResult
+from result_processing.memory_condenser import (
+    condense_memory,
+)
+
+from result_processing.models import (
+    MemoryUpdateProposal,
+    RuntimeProcessingResult,
+)
+
 from state import TerminalState
 
 from result_processing.normalizer import (
@@ -10,14 +17,16 @@ from result_processing.artifact_policy import (
     evaluate_artifact_candidate,
 )
 
-from result_processing.state_mutator import (
-    mutate_state,
+from utils.memory_formatter import (
+    format_active_memory,
 )
-from utils.memory_formatter import format_active_memory
-from utils.normalized_result_formatter import format_normalized_result
+
+from utils.normalized_result_formatter import (
+    format_normalized_result,
+)
 
 
-def process_tool_result(
+async def process_tool_result(
     *,
     state: TerminalState,
     tool_name: str,
@@ -27,12 +36,22 @@ def process_tool_result(
     """
     Process a raw tool result through the Runtime Processing Pipeline.
 
-    This function is responsible for normalization, artifact
-    policy evaluation, observation formatting, and memory proposal
-    generation.
+    This function is responsible for:
+
+    - normalization
+    - artifact policy evaluation
+    - observation formatting
+    - memory proposal generation
 
     It does not mutate TerminalState.
+
+    Memory condensation failure must not discard the already
+    normalized execution result or artifact decision.
     """
+
+    # ==========================================================
+    # 1. Normalize raw result
+    # ==========================================================
 
     normalized = normalize_result(
         tool_name=tool_name,
@@ -40,25 +59,53 @@ def process_tool_result(
         attempt=attempt,
     )
 
-    _artifact_decision = evaluate_artifact_candidate(
+    # ==========================================================
+    # 2. Evaluate artifact policy
+    # ==========================================================
+
+    artifact_decision = evaluate_artifact_candidate(
         normalized,
     )
+
+    # ==========================================================
+    # 3. Build semantic observation
+    # ==========================================================
 
     formatted_observation = format_normalized_result(
         goal=state["goal"],
         normalized=normalized,
-        artifact_decision=_artifact_decision,
+        artifact_decision=artifact_decision,
     )
 
-    proposal = condense_memory(
+    # ==========================================================
+    # 4. Generate Active Memory proposal
+    # ==========================================================
+    #
+    # Memory condensation is downstream of normalization.
+    #
+    # If the condenser fails, the normalized result and artifact
+    # decision are still valid and must continue through the
+    # Runtime Processing Pipeline.
+    #
+    # The failure therefore produces an empty proposal rather
+    # than destroying the complete processing result.
+    # ==========================================================
+
+    proposal = await condense_memory(
         goal=state["goal"],
-        active_memory=format_active_memory(state["active_memory"]),
+        active_memory=format_active_memory(
+            state["active_memory"],
+        ),
         formatted_observation=formatted_observation,
         tool_name=normalized.context.tool_name,
     )
 
+    # ==========================================================
+    # 5. Return complete RuntimeProcessingResult
+    # ==========================================================
+
     return RuntimeProcessingResult(
         normalized_result=normalized,
-        artifact_decision=_artifact_decision,
+        artifact_decision=artifact_decision,
         memory_update=proposal,
     )

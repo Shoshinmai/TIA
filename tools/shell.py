@@ -1,12 +1,12 @@
 from langchain_core.tools import tool
 
-from .command_runner import run_command
+from tools.command_runner import run_command
 
 
 @tool
-def run_terminal(command: str) -> dict:
+async def run_terminal(command: str) -> dict:
     """
-    Execute exactly one Windows terminal command.
+    Execute exactly one Windows terminal command asynchronously.
 
     This is the fallback terminal capability of the Terminal Agent.
 
@@ -30,11 +30,8 @@ def run_terminal(command: str) -> dict:
         return_code
     """
 
-    result = run_command(command)
+    result = await run_command(command)
 
-    # command_runner currently exposes `returncode`.
-    # Keep the adapter tolerant of the normalized `return_code`
-    # spelling as well.
     return_code = result.get(
         "return_code",
         result.get("returncode", -1),
@@ -46,10 +43,3 @@ def run_terminal(command: str) -> dict:
         "error": result.get("stderr", ""),
         "return_code": return_code,
     }
-
-
-# print(
-#     run_terminal.invoke(
-#         {"command": "where python"}
-#     )
-# )

@@ -1,19 +1,19 @@
 from __future__ import annotations
 
-import subprocess
+import asyncio
 from typing import Any
 
 
-DEFAULT_TIMEOUT_SECONDS = 15
+DEFAULT_TIMEOUT_SECONDS = 30
 
 
-def run_command(
+async def run_command(
     command: str,
     *,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     """
-    Execute one Windows shell command.
+    Execute one Windows shell command asynchronously.
 
     This layer is responsible only for process execution and
     capturing stdout/stderr/return code.
@@ -22,18 +22,63 @@ def run_command(
     """
 
     try:
-        result = subprocess.run(
+        process = await asyncio.create_subprocess_shell(
             command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
 
-        stdout = result.stdout or ""
-        stderr = result.stderr or ""
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                process.communicate(),
+                timeout=timeout,
+            )
+
+        except asyncio.TimeoutError:
+            process.kill()
+
+            stdout_bytes, stderr_bytes = await process.communicate()
+
+            stdout = stdout_bytes.decode(
+                "utf-8",
+                errors="replace",
+            )
+
+            stderr = stderr_bytes.decode(
+                "utf-8",
+                errors="replace",
+            )
+
+            return {
+                "stdout": stdout,
+                "stderr": (
+                    f"Command timed out after "
+                    f"{timeout} seconds."
+                    + (
+                        f"\n{stderr}"
+                        if stderr
+                        else ""
+                    )
+                ),
+                "returncode": None,
+            }
+
+        except asyncio.CancelledError:
+            # A cancelled agent run must not leave its shell process running.
+            if process.returncode is None:
+                process.kill()
+                await process.communicate()
+            raise
+
+        stdout = stdout_bytes.decode(
+            "utf-8",
+            errors="replace",
+        )
+
+        stderr = stderr_bytes.decode(
+            "utf-8",
+            errors="replace",
+        )
 
         print(
             "[COMMAND RUNNER]",
@@ -52,39 +97,13 @@ def run_command(
 
         print(
             "[COMMAND RUNNER RETURN CODE]",
-            result.returncode,
+            process.returncode,
         )
 
         return {
             "stdout": stdout,
             "stderr": stderr,
-            "returncode": result.returncode,
-        }
-
-    except subprocess.TimeoutExpired as exc:
-
-        stdout = exc.stdout or ""
-        stderr = exc.stderr or ""
-
-        if isinstance(stdout, bytes):
-            stdout = stdout.decode(
-                "utf-8",
-                errors="replace",
-            )
-
-        if isinstance(stderr, bytes):
-            stderr = stderr.decode(
-                "utf-8",
-                errors="replace",
-            )
-
-        return {
-            "stdout": stdout,
-            "stderr": (
-                f"Command timed out after "
-                f"{timeout} seconds." + (f"\n{stderr}" if stderr else "")
-            ),
-            "returncode": None,
+            "returncode": process.returncode,
         }
 
     except Exception as exc:

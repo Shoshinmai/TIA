@@ -27,9 +27,7 @@ def _start_current_task(
     task_plan = state.get("task_plan")
 
     if task_plan is None:
-        raise ValueError(
-            "Cannot start execution without a TaskPlan."
-        )
+        raise ValueError("Cannot start execution without a TaskPlan.")
 
     # ----------------------------------------------------------
     # Existing active task
@@ -52,8 +50,7 @@ def _start_current_task(
 
     if current_task is None:
         raise ValueError(
-            "Cannot start execution because the TaskPlan has "
-            "no executable task."
+            "Cannot start execution because the TaskPlan has " "no executable task."
         )
 
     # ----------------------------------------------------------
@@ -67,7 +64,7 @@ def _start_current_task(
     return current_task
 
 
-def terminal_task_executor_node(state: TerminalState):
+async def terminal_task_executor_node(state: TerminalState):
     """
     Generate an execution workflow for the current objective.
 
@@ -88,9 +85,7 @@ def terminal_task_executor_node(state: TerminalState):
     #     execution_context.model_dump()
     # )
 
-    prompt = TERMINAL_EXECUTOR_PROMPT.format(
-        **execution_context.model_dump()
-    )
+    prompt = TERMINAL_EXECUTOR_PROMPT.format(**execution_context.model_dump())
 
     # executor_output = call_ollama(
     #     prompt=prompt,
@@ -99,10 +94,11 @@ def terminal_task_executor_node(state: TerminalState):
     #     state_model=ExecutorOutput,
     # )
 
-    executor_output = call_nvidia(
+    executor_output = await call_nvidia(
         prompt,
-        # "openai/gpt-oss-20b",
-        "nvidia/nemotron-3-ultra-550b-a55b",
+        "openai/gpt-oss-20b",
+        # "nvidia/nemotron-3.5-lightning-30b-a3b",
+        # "nvidia/nemotron-3-ultra-550b-a55b",
         subagent=True,
         state_model=ExecutorOutput,
     )
@@ -125,21 +121,21 @@ def terminal_task_executor_node(state: TerminalState):
     # redefine which TaskItem the workflow belongs to.
     # ----------------------------------------------------------
 
-    executor_output.workflow.objective = (
-        current_task.objective
-    )
+    executor_output.workflow.objective = current_task.objective
 
-    runtime_state = state.get(
-        "runtime_state"
-    )
+    runtime_state = state.get("runtime_state")
 
     if runtime_state is not None:
         runtime_state.decision_context = None
 
     print("\n========== EXECUTOR ==========")
-    print(
-        executor_output.model_dump()
-    )
+    print(executor_output.model_dump())
+    print("\n EXECUTING....\n")
+    # CHANGE THIS LINE to look inside executor_output instead of state
+    for i, step in enumerate(getattr(executor_output.workflow, "steps", [])):
+        print(
+            f"\n[STEP-{i+1}] --> {step.description} : (TOOL -> {step.capability} | ARGS -> {step.arguments} | STATUS -> {step.status})"
+        )
 
     return {
         "execution_workflow": executor_output.workflow,

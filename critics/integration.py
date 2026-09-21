@@ -55,6 +55,10 @@ def critic_output_to_runtime_context(
             )
             for evidence in critic_output.evidence
         ],
+        decision_scope=critic_output.scope.value,
+        target_task_ids=list(
+            critic_output.target_task_ids,
+        ),
     )
 
 

@@ -10,6 +10,7 @@ from runtime.stages import RuntimeStage
 from state import TerminalState
 from task_executor.workflow_runtime import WorkflowRuntime
 from task_plan.manager import TaskPlanManager
+from task_plan.models import TaskItemStatus
 
 
 def runtime_planner_result_node(
@@ -46,7 +47,7 @@ def runtime_planner_result_node(
     }
 
 
-def execute_current_workflow_step(
+async def execute_current_workflow_step(
     state: TerminalState,
 ) -> dict:
     """
@@ -63,7 +64,7 @@ def execute_current_workflow_step(
 
     workflow_runtime = WorkflowRuntime()
 
-    result = workflow_runtime.execute_next_step(
+    result = await workflow_runtime.execute_next_step(
         workflow,
     )
 
@@ -74,7 +75,7 @@ def execute_current_workflow_step(
     }
 
 
-def runtime_workflow_execution_node(
+async def runtime_workflow_execution_node(
     state: TerminalState,
 ) -> dict:
     """
@@ -92,7 +93,7 @@ def runtime_workflow_execution_node(
 
     runtime_state = state["runtime_state"]
 
-    result = execute_current_workflow_step(
+    result = await execute_current_workflow_step(
         state,
     )
 
@@ -308,7 +309,32 @@ def runtime_critic_result_node(
 
     event = runtime_event.event
     decision_context = runtime_event.context
-    
+
+    # ==========================================================
+    # CONCURRENT PLAN REVIEW
+    # ==========================================================
+    #
+    # Concurrent execution has already:
+    #
+    #   - completed all active workers in the wave
+    #   - reconciled their results
+    #   - updated the authoritative TaskPlan
+    #
+    # Therefore there should be no singular IN_PROGRESS task
+    # representing the whole concurrent execution.
+    #
+    # The Critic's target-aware decision contract is used here.
+    # ==========================================================
+
+    if state.get("plan_execution_outcome") is not None:
+
+        return _apply_concurrent_critic_decision(
+            state=state,
+            event=event,
+            decision_context=decision_context,
+            runtime_state=runtime_state,
+        )
+
     # ==========================================================
     # GOAL_COMPLETED
     # ==========================================================
@@ -334,9 +360,7 @@ def runtime_critic_result_node(
         )
 
         if task_plan is None:
-            raise ValueError(
-                "GOAL_COMPLETED received without a TaskPlan."
-            )
+            raise ValueError("GOAL_COMPLETED received without a TaskPlan.")
 
         # ------------------------------------------------------
         # Finalize any task that is still marked IN_PROGRESS.
@@ -584,10 +608,23 @@ def runtime_critic_result_node(
     # The Executor will generate a fresh workflow after planning.
     # ----------------------------------------------------------
 
-    if event in (
-        RuntimeEvent.REPLAN_REQUIRED,
+    if event == RuntimeEvent.CONTINUE_TASK:
+
+        # The previous concurrent execution boundary has already
+        # been reviewed. Clear it before starting another execution
+        # cycle so it cannot be mistaken for the new execution result.
+        state["plan_execution_outcome"] = None
+        state["execution_workflow"] = None
+
+    elif event in (
         RuntimeEvent.PLAN_UPDATE_REQUIRED,
+        RuntimeEvent.REPLAN_REQUIRED,
     ):
+
+        # Preserve the PlanExecutionOutcome for the Planner.
+        #
+        # The Planner may need the execution evidence when deciding
+        # how to update or replace the rolling TaskPlan.
         state["execution_workflow"] = None
 
     elif event == RuntimeEvent.RETRY_TASK:
@@ -611,6 +648,12 @@ def runtime_critic_result_node(
 
         state["execution_workflow"] = None
 
+    else:
+
+        raise ValueError(
+            "Unsupported plan-scoped concurrent Critic event: " f"'{event.value}'."
+        )
+
     # ----------------------------------------------------------
     # Normal Runtime decision
     # ----------------------------------------------------------
@@ -626,6 +669,274 @@ def runtime_critic_result_node(
         "critic_runtime_event": None,
         "execution_workflow": state.get("execution_workflow"),
     }
+
+
+def _apply_concurrent_critic_decision(
+    *,
+    state: TerminalState,
+    event: RuntimeEvent,
+    decision_context: RuntimeDecisionContext,
+    runtime_state,
+) -> dict:
+    """
+    Apply a target-aware Critic decision to a concurrently
+    executed TaskPlan.
+
+    The Critic only recommends an action.
+
+    This function performs deterministic runtime mutation and
+    routing for the concurrent execution path.
+    """
+
+    task_plan = state.get(
+        "task_plan",
+    )
+
+    if task_plan is None:
+        raise ValueError("Concurrent Critic decision received without a TaskPlan.")
+
+    scope = decision_context.decision_scope
+
+    target_task_ids = list(
+        decision_context.target_task_ids,
+    )
+
+    # ==========================================================
+    # TASK-SCOPED DECISIONS
+    # ==========================================================
+
+    if scope == "task":
+
+        if not target_task_ids:
+            raise ValueError(
+                f"Concurrent Critic event '{event.value}' " "requires target_task_ids."
+            )
+
+        # ------------------------------------------------------
+        # Validate that all requested task IDs exist.
+        # ------------------------------------------------------
+
+        target_tasks = []
+
+        for task_id in target_task_ids:
+
+            task = TaskPlanManager.get_task(
+                plan=task_plan,
+                task_id=task_id,
+            )
+
+            target_tasks.append(
+                task,
+            )
+
+        # ------------------------------------------------------
+        # RETRY_TASK
+        # ------------------------------------------------------
+
+        if event == RuntimeEvent.RETRY_TASK:
+
+            for task in target_tasks:
+
+                TaskPlanManager.retry_failed_task(
+                    plan=task_plan,
+                    task_id=task.task_id,
+                )
+
+            # --------------------------------------------------
+            # The previous PlanExecutionOutcome describes the
+            # execution that has just been reviewed.
+            #
+            # It must not survive into the new execution cycle.
+            # --------------------------------------------------
+
+            state["plan_execution_outcome"] = None
+
+            state["execution_workflow"] = None
+
+            RuntimeKernel.handle_event(
+                runtime_state=runtime_state,
+                event=RuntimeEvent.RETRY_TASK,
+                decision_context=decision_context,
+            )
+
+            return {
+                "runtime_state": runtime_state,
+                "task_plan": task_plan,
+                "plan_execution_outcome": None,
+                "execution_workflow": None,
+                "critic_runtime_event": None,
+            }
+
+        # ------------------------------------------------------
+        # TASK_COMPLETED
+        # ------------------------------------------------------
+        #
+        # In the concurrent path, the reconciler normally has
+        # already marked completed tasks. Therefore this decision
+        # is treated as confirmation rather than another lifecycle
+        # mutation.
+        # ------------------------------------------------------
+
+        if event == RuntimeEvent.TASK_COMPLETED:
+
+            for task in target_tasks:
+
+                if task.status != TaskItemStatus.COMPLETED:
+                    raise ValueError(
+                        "Concurrent TASK_COMPLETED decision "
+                        f"targeted task '{task.task_id}', but its "
+                        f"current status is '{task.status}'."
+                    )
+
+            # No TaskPlan mutation is required.
+
+            state["plan_execution_outcome"] = None
+            state["execution_workflow"] = None
+
+            RuntimeKernel.handle_event(
+                runtime_state=runtime_state,
+                event=RuntimeEvent.TASK_COMPLETED,
+                decision_context=decision_context,
+            )
+
+            return {
+                "runtime_state": runtime_state,
+                "task_plan": task_plan,
+                "plan_execution_outcome": None,
+                "execution_workflow": None,
+                "critic_runtime_event": None,
+            }
+
+        # ------------------------------------------------------
+        # CONTINUE_TASK
+        # ------------------------------------------------------
+
+        if event == RuntimeEvent.CONTINUE_TASK:
+
+            state["plan_execution_outcome"] = None
+            state["execution_workflow"] = None
+
+            RuntimeKernel.handle_event(
+                runtime_state=runtime_state,
+                event=RuntimeEvent.CONTINUE_TASK,
+                decision_context=decision_context,
+            )
+
+            return {
+                "runtime_state": runtime_state,
+                "task_plan": task_plan,
+                "plan_execution_outcome": None,
+                "execution_workflow": None,
+                "critic_runtime_event": None,
+            }
+
+        raise ValueError(
+            "Unsupported task-scoped concurrent Critic event: " f"'{event.value}'."
+        )
+
+    # ==========================================================
+    # PLAN-SCOPED DECISIONS
+    # ==========================================================
+
+    if scope == "plan":
+
+        if target_task_ids:
+            raise ValueError(
+                f"Concurrent Critic event '{event.value}' "
+                "must not contain target_task_ids."
+            )
+
+        if event == RuntimeEvent.CONTINUE_TASK:
+
+            state["plan_execution_outcome"] = None
+            state["execution_workflow"] = None
+
+            RuntimeKernel.handle_event(
+                runtime_state=runtime_state,
+                event=RuntimeEvent.CONTINUE_TASK,
+                decision_context=decision_context,
+            )
+
+            return {
+                "runtime_state": runtime_state,
+                "task_plan": task_plan,
+                "plan_execution_outcome": None,
+                "execution_workflow": None,
+                "critic_runtime_event": None,
+            }
+
+        if event in (
+            RuntimeEvent.PLAN_UPDATE_REQUIRED,
+            RuntimeEvent.REPLAN_REQUIRED,
+        ):
+
+            state["execution_workflow"] = None
+
+            RuntimeKernel.handle_event(
+                runtime_state=runtime_state,
+                event=event,
+                decision_context=decision_context,
+            )
+
+            return {
+                "runtime_state": runtime_state,
+                "task_plan": task_plan,
+                "plan_execution_outcome": (state.get("plan_execution_outcome")),
+                "execution_workflow": None,
+                "critic_runtime_event": None,
+            }
+
+        raise ValueError(
+            "Unsupported plan-scoped concurrent Critic event: " f"'{event.value}'."
+        )
+
+    # ==========================================================
+    # GOAL-SCOPED DECISIONS
+    # ==========================================================
+
+    if scope == "goal":
+
+        if target_task_ids:
+            raise ValueError(
+                f"Concurrent Critic event '{event.value}' "
+                "must not contain target_task_ids."
+            )
+
+        if event == RuntimeEvent.GOAL_COMPLETED:
+
+            state["execution_workflow"] = None
+
+            ephemeral = state.get(
+                "ephemeral_execution_state",
+            )
+
+            if ephemeral is not None:
+                ephemeral.current_attempt_id = None
+
+            RuntimeKernel.handle_event(
+                runtime_state=runtime_state,
+                event=RuntimeEvent.GOAL_COMPLETED,
+                decision_context=decision_context,
+            )
+
+            return {
+                "runtime_state": runtime_state,
+                "task_plan": task_plan,
+                "plan_execution_outcome": (
+                    state.get(
+                        "plan_execution_outcome",
+                    )
+                ),
+                "execution_workflow": None,
+                "ephemeral_execution_state": ephemeral,
+                "critic_runtime_event": None,
+            }
+
+        raise ValueError(
+            "Unsupported goal-scoped concurrent Critic event: " f"'{event.value}'."
+        )
+
+    raise ValueError("Unknown Critic decision scope: " f"'{scope}'.")
 
 
 def complete_current_task(

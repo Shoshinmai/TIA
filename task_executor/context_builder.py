@@ -52,9 +52,7 @@ def build_execution_context(
     task_plan = state.get("task_plan")
 
     if task_plan is None:
-        raise ValueError(
-            "Cannot build execution context without a TaskPlan."
-        )
+        raise ValueError("Cannot build execution context without a TaskPlan.")
 
     # ----------------------------------------------------------
     # 1. Existing active task
@@ -114,6 +112,57 @@ def build_execution_context(
             state["artifact_references"],
         ),
         capabilities=_build_capabilities(
+            state,
+        ),
+        filesystem_path_guidance=_build_filesystem_path_guidance(
+            state,
+        ),
+    )
+
+
+def build_execution_context_for_task(
+    *,
+    state: dict[str, Any],
+    task: TaskItem,
+) -> ExecutionContext:
+    """
+    Build an Executor context for one explicitly assigned task.
+
+    Unlike build_execution_context(), this function does not
+    discover task ownership from the shared TaskPlan. The caller
+    explicitly assigns the TaskItem to the worker.
+
+    This is the concurrent-safe entry point for task-local workers.
+    """
+
+    task_plan = state.get("task_plan")
+
+    if task_plan is None:
+        raise ValueError("Cannot build execution context without a TaskPlan.")
+
+    return ExecutionContext(
+        task_goal=task_plan.goal,
+        task_metadata=_build_task_metadata(
+            task_plan=task_plan,
+            task=task,
+        ),
+        objective=task.objective,
+        decision_context=_build_decision_context(
+            state,
+        ),
+        active_memory=_build_active_memory(
+            state["active_memory"],
+        ),
+        execution_summary=_build_execution_summary(
+            state["execution_memory"],
+        ),
+        artifact_catalog=_build_artifact_catalog(
+            state["artifact_references"],
+        ),
+        capabilities=_build_capabilities(
+            state,
+        ),
+        filesystem_path_guidance=_build_filesystem_path_guidance(
             state,
         ),
     )
@@ -195,6 +244,53 @@ def _build_capabilities(
     )
 
 
+def _build_filesystem_path_guidance(
+    state: dict[str, Any],
+) -> str:
+    """
+    Build explicit guidance for preserving filesystem locations
+    returned by discovery tools.
+    """
+
+    current_directory = state.get(
+        "current_directory",
+    )
+
+    if current_directory:
+        return (
+            "Filesystem path rules:\n"
+            f"- Project working directory: {current_directory}\n"
+            "- Discovery tools may return paths relative to the "
+            "location that was inspected.\n"
+            "- When using such a result in a later capability, "
+            "preserve the inspected directory prefix.\n"
+            "- Do not strip the directory that established the "
+            "meaning of the returned path.\n"
+            "- Do not reinterpret a discovery-relative path as "
+            "project-root-relative.\n"
+            "- Example:\n"
+            "  inspected location: agents/terminal\n"
+            "  returned path: runtime/foo.py\n"
+            "  correct next path: "
+            "agents/terminal/runtime/foo.py"
+        )
+
+    return (
+        "Filesystem path rules:\n"
+        "- Discovery results may be relative to the location "
+        "that was inspected.\n"
+        "- Preserve the inspected directory prefix when using "
+        "a discovery result in a later capability.\n"
+        "- Do not reinterpret discovery-relative paths as "
+        "project-root-relative paths.\n"
+        "- Example:\n"
+        "  inspected location: agents/terminal\n"
+        "  returned path: runtime/foo.py\n"
+        "  correct next path: "
+        "agents/terminal/runtime/foo.py"
+    )
+
+
 def _build_decision_context(
     state: dict[str, Any] | TerminalState,
 ) -> str:
@@ -228,9 +324,7 @@ def _build_decision_context(
 
     if decision_context.evidence:
         for evidence in decision_context.evidence:
-            lines.append(
-                f"- {evidence}"
-            )
+            lines.append(f"- {evidence}")
     else:
         lines.append("- None")
 

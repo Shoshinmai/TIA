@@ -9,7 +9,7 @@ from nodes.evaluator import terminal_evaluator_node
 from nodes.artifact_retriever import artifact_retriever_node
 from nodes.message_adapter import message_adapter_node
 from nodes.planner import terminal_planner_node
-from nodes.tool_compiler import terminal_tool_selector_node
+# from nodes.tool_compiler import terminal_tool_selector_node
 from nodes.validator import command_validator_node
 from router.evaluator_router import evaluator_router
 from router.safety_router import safety_router
@@ -33,10 +33,10 @@ builder.add_node(
     terminal_planner_node,
 )
 
-builder.add_node(
-    "tool_selector",
-    terminal_tool_selector_node,
-)
+# builder.add_node(
+#     "tool_selector",
+#     terminal_tool_selector_node,
+# )
 builder.add_node(
     "execution_tracker",
     execution_tracker_node,
@@ -60,11 +60,12 @@ builder.add_node(
 )
 builder.set_entry_point("task_initializer")
 builder.add_edge("task_initializer", "planner")
-builder.add_edge("planner", "tool_selector")
-builder.add_edge(
-    "tool_selector",
-    "execution_tracker",
-)
+builder.add_edge("planner", "execution_tracker")
+# builder.add_edge("planner", "tool_selector")
+# builder.add_edge(
+#     "tool_selector",
+#     "execution_tracker",
+# )
 
 builder.add_edge(
     "execution_tracker",

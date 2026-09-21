@@ -15,6 +15,9 @@ task_plan/__pycache__
 tools/__pycache__
 utils/__pycache__
 .env
+logs
 ui/node_modules
 .git
 .vscode
+claude-fable-5.md
+deep-research-report-on-prompt-by-fable5.md

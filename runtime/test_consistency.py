@@ -53,6 +53,23 @@ def test_executing_requires_in_progress_task():
 
     with pytest.raises(RuntimeError):
         validate_runtime_consistency(state)
+
+
+def test_concurrent_tasks_can_be_in_progress():
+    plan = TaskPlan(
+        plan_id="plan-concurrent",
+        goal="Inspect project",
+        tasks=[
+            TaskItem(task_id="A", objective="Inspect planner.py", status=TaskItemStatus.IN_PROGRESS),
+            TaskItem(task_id="B", objective="Inspect executor.py", status=TaskItemStatus.IN_PROGRESS),
+        ],
+    )
+
+    validate_runtime_consistency({
+        "runtime_state": RuntimeState(mode=RuntimeMode.EXECUTING),
+        "task_plan": plan,
+        "concurrent_execution": True,
+    })
         
 def test_only_one_task_can_be_in_progress():
 
@@ -79,6 +96,7 @@ def test_only_one_task_can_be_in_progress():
             mode=RuntimeMode.EXECUTING,
         ),
         "task_plan": plan,
+        "concurrent_execution": False,
     }
 
     with pytest.raises(RuntimeError):

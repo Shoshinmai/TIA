@@ -6,7 +6,7 @@ from utils.evaluator_context_builder import build_evaluator_context
 from utils.evaluator_observation_builder import (
     build_evaluator_observation,
 )
-from llm.llmclient import call_groq, call_ollama
+from llm.llmclient import call_ollama
 
 
 def terminal_evaluator_node(state: TerminalState):

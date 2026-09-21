@@ -40,6 +40,20 @@ class RuntimeDecisionContext(BaseModel):
         min_length=1,
     )
 
+    decision_scope: str = Field(
+        min_length=1,
+        description=(
+            "Scope at which the runtime decision must be applied."
+        ),
+    )
+
+    target_task_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Task IDs targeted by the runtime decision."
+        ),
+    )
+
 
 class RuntimeState(BaseModel):
     """

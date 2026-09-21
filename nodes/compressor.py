@@ -1,5 +1,5 @@
 from state import TerminalState
-from llm.llmclient import call_groq, call_ollama
+from llm.llmclient import call_ollama
 
 from models import ObservationSummary, TerminalAction
 

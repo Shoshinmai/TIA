@@ -1,0 +1,18 @@
+.rail {
+  height: calc(100vh - 158px);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+@media (max-width: 800px) {
+  .rail {
+    height: auto;
+    max-height: 132px;
+    overflow-y: auto;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .rail .nav-item:nth-child(n + 6) {
+    display: flex;
+  }
+}
