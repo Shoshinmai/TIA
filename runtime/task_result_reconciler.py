@@ -174,10 +174,10 @@ class TaskResultReconciler:
 
             if result.status == TaskExecutionStatus.COMPLETED:
 
-                TaskPlanManager.complete_task(
-                    plan=plan,
-                    task_id=result.task_id,
-                )
+                # TaskPlanManager.complete_task(
+                #     plan=plan,
+                #     task_id=result.task_id,
+                # )
 
                 continue
 
