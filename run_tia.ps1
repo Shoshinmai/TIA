@@ -160,6 +160,72 @@ else {
 }
 
 # =============================================================
+# 3c. Make sure an OmniRoute gateway is reachable.
+# =============================================================
+
+# OmniRoute is started outside this script, so it can only be probed. Every
+# LLM node in TIA routes through it, so an unreachable gateway means the
+# workflow cannot produce any model output.
+
+function Read-TiaEnvValue {
+    param([string]$Name)
+
+    $envFile = Join-Path $root ".env"
+    if (-not (Test-Path $envFile)) { return $null }
+
+    foreach ($line in (Get-Content $envFile)) {
+        if ($line -match "^\s*$([regex]::Escape($Name))\s*=\s*(.*)$") {
+            return $Matches[1].Trim().Trim('"').Trim("'")
+        }
+    }
+
+    return $null
+}
+
+$omniBase = $env:OMNIROUTE_BASE_URL
+if (-not $omniBase) { $omniBase = Read-TiaEnvValue "OMNIROUTE_BASE_URL" }
+if (-not $omniBase) { $omniBase = "http://127.0.0.1:20128" }
+$omniBase = $omniBase.TrimEnd("/")
+if (-not $omniBase.EndsWith("/v1")) { $omniBase = "$omniBase/v1" }
+
+$omniKey = $env:OMNIROUTE_API_KEY
+if (-not $omniKey) { $omniKey = Read-TiaEnvValue "OMNIROUTE_API_KEY" }
+if (-not $omniKey) { $omniKey = $env:OPENAI_API_KEY }
+if (-not $omniKey) { $omniKey = Read-TiaEnvValue "OPENAI_API_KEY" }
+
+$omniHeaders = @{ "Content-Type" = "application/json" }
+if ($omniKey) {
+    $omniHeaders["Authorization"] = "Bearer $omniKey"
+}
+
+try {
+    Invoke-WebRequest -Uri "$omniBase/models" -Headers $omniHeaders -UseBasicParsing -TimeoutSec 5 | Out-Null
+    Write-Host "[TIA] OmniRoute is online at $omniBase" -ForegroundColor Green
+}
+catch {
+    $status = $null
+    if ($_.Exception.Response) {
+        $status = [int]$_.Exception.Response.StatusCode
+    }
+
+    if ($status -eq 401 -or $status -eq 403) {
+        Write-Host "[TIA] ERROR: OmniRoute at $omniBase rejected the API key (HTTP $status)." -ForegroundColor Red
+        Write-Host "[TIA] ERROR: Check OMNIROUTE_API_KEY in .env against the gateway's configured key." -ForegroundColor Red
+    }
+    elseif ($status) {
+        Write-Host "[TIA] ERROR: OmniRoute at $omniBase returned HTTP $status." -ForegroundColor Red
+    }
+    else {
+        Write-Host "[TIA] ERROR: OmniRoute is not reachable at $omniBase." -ForegroundColor Red
+    }
+
+    Write-Host "[TIA] ERROR: TIA routes every LLM node through OmniRoute, so no node will produce output." -ForegroundColor Red
+    Write-Host "[TIA] Start OmniRoute, then re-run this script. Press Enter to close..." -ForegroundColor Yellow
+    Read-Host | Out-Null
+    exit 1
+}
+
+# =============================================================
 # 4. Start the UI in the foreground.
 # =============================================================
 
