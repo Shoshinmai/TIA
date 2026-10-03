@@ -735,12 +735,32 @@ def _apply_concurrent_critic_decision(
 
         if event == RuntimeEvent.RETRY_TASK:
 
-            for task in target_tasks:
+            if event == RuntimeEvent.RETRY_TASK:
 
-                TaskPlanManager.retry_failed_task(
-                    plan=task_plan,
-                    task_id=task.task_id,
-                )
+                for task in target_tasks:
+
+                    if task.status == TaskItemStatus.FAILED:
+
+                        TaskPlanManager.retry_failed_task(
+                            plan=task_plan,
+                            task_id=task.task_id,
+                        )
+
+                    elif task.status == TaskItemStatus.IN_PROGRESS:
+
+                        TaskPlanManager.retry_task(
+                            plan=task_plan,
+                            task_id=task.task_id,
+                        )
+
+                    else:
+
+                        raise ValueError(
+                            "Concurrent RETRY_TASK decision "
+                            f"targeted task '{task.task_id}', but its "
+                            f"current status is '{task.status}'. "
+                            "Only FAILED or IN_PROGRESS tasks may be retried."
+                        )
 
             # --------------------------------------------------
             # The previous PlanExecutionOutcome describes the
@@ -781,14 +801,16 @@ def _apply_concurrent_critic_decision(
 
             for task in target_tasks:
 
-                if task.status != TaskItemStatus.COMPLETED:
-                    raise ValueError(
-                        "Concurrent TASK_COMPLETED decision "
-                        f"targeted task '{task.task_id}', but its "
-                        f"current status is '{task.status}'."
+                # if task.status != TaskItemStatus.COMPLETED:
+                #     raise ValueError(
+                #         "Concurrent TASK_COMPLETED decision "
+                #         f"targeted task '{task.task_id}', but its "
+                #         f"current status is '{task.status}'."
+                #     )
+                TaskPlanManager.complete_task(
+                        plan=task_plan,
+                        task_id=task.task_id,
                     )
-
-            # No TaskPlan mutation is required.
 
             state["plan_execution_outcome"] = None
             state["execution_workflow"] = None
