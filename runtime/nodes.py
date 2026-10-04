@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from memory.execution_manager import ExecutionMemoryManager
 from models import AttemptStatus
+from output.context import OutputContextBuilder
+from output.generator import OutputGenerator
+from output.models import AgentOutput, OutputType
 from result_processing.state_mutator import mutate_state
 from runtime.events import RuntimeEvent
 from runtime.kernel import RuntimeKernel
@@ -668,6 +671,76 @@ def runtime_critic_result_node(
         "runtime_state": runtime_state,
         "critic_runtime_event": None,
         "execution_workflow": state.get("execution_workflow"),
+    }
+    
+async def runtime_output_node(
+    state: TerminalState,
+) -> dict:
+    """
+    Produce the user-facing AgentOutput.
+
+    This is the terminal communication boundary.
+
+    Responsibilities:
+        - Build a bounded OutputContext.
+        - Generate user-facing communication.
+        - Preserve the authoritative OutputType.
+
+    It does not:
+        - mutate TaskPlan,
+        - change RuntimeState,
+        - execute tools,
+        - invoke Planner/Critic,
+        - modify ActiveTaskMemory.
+    """
+
+    context = OutputContextBuilder.build(
+        state,
+    )
+
+    try:
+
+        output = await OutputGenerator().generate(
+            context,
+        )
+
+    except Exception:
+
+        # ------------------------------------------------------
+        # Output generation failure must not turn an otherwise
+        # completed runtime into a runtime failure.
+        #
+        # The communication layer therefore has a deterministic
+        # fallback.
+        # ------------------------------------------------------
+
+        fallback_messages = {
+            OutputType.FINAL: (
+                "The requested work was completed, "
+                "but I could not generate the final summary."
+            ),
+            OutputType.BLOCKED: (
+                "I could not complete the request because "
+                "the current task state is blocked."
+            ),
+            OutputType.FAILED: (
+                "I could not complete the requested work."
+            ),
+            OutputType.CANCELLED: (
+                "The agent run was cancelled before the "
+                "requested work was completed."
+            ),
+        }
+
+        output = AgentOutput(
+            output_type=context.output_type,
+            message=fallback_messages[
+                context.output_type
+            ],
+        )
+
+    return {
+        "agent_output": output,
     }
 
 

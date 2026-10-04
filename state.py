@@ -15,6 +15,7 @@ from models import (
     TaskContext,
     ThreadMemory,
 )
+from output.models import AgentOutput
 from result_processing.models import RuntimeProcessingResult
 from runtime.models import RuntimeState
 from runtime.plan_execution_outcome import PlanExecutionOutcome
@@ -53,6 +54,8 @@ class TerminalState(TypedDict):
     execution_workflow: ExecutionWorkflow | None
     
     critic_runtime_event: CriticRuntimeEvent | None
+    
+    agent_output: AgentOutput | None
 
     # ==========================================================
     # GRAPH / TOOL PROTOCOL

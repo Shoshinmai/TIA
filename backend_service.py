@@ -44,7 +44,6 @@ class TaskSession:
             "decision": None,
             "artifacts": [],
             "memory": {"active": [], "thread": [], "persistent": []},
-            "observation": {"summary": "", "important_information": "", "conclusion": "", "raw": None},
             "execution_memory": [],
             "thinking": {"active": False, "model": "", "text": "", "started_at": None},
             "concurrent_flow": {"plan_id": None, "wave_status": "idle", "max_concurrency": 3, "tasks": [], "events": []},
@@ -352,9 +351,6 @@ def snapshot_from_state(state: dict[str, Any], previous: dict[str, Any]) -> dict
     active_memory = model_dict(state.get("active_memory")) or {}
     thread_memory = model_dict(state.get("thread_memory")) or {}
     persistent_memory = model_dict(state.get("persistent_memory")) or {}
-    observation = model_dict(state.get("observation_input")) or {}
-    processing = model_dict(state.get("runtime_processing_result")) or {}
-    normalized = processing.get("normalized_result", {}) or {}
     execution_memory = plain(state.get("execution_memory", previous.get("execution_memory", [])))
     previous_flow = previous.get("concurrent_flow", {})
     live_by_id = {
@@ -402,12 +398,6 @@ def snapshot_from_state(state: dict[str, Any], previous: dict[str, Any]) -> dict
             "active": memory_items(active_memory),
             "thread": memory_items(thread_memory),
             "persistent": memory_items(persistent_memory),
-        },
-        "observation": {
-            "summary": state.get("observation_summary", previous.get("observation", {}).get("summary", "")),
-            "important_information": state.get("observation_important_information", previous.get("observation", {}).get("important_information", "")),
-            "conclusion": state.get("observation_conclusion", previous.get("observation", {}).get("conclusion", "")),
-            "raw": observation.get("raw_result") or normalized.get("execution"),
         },
         "execution_memory": execution_memory,
         "concurrent_flow": {

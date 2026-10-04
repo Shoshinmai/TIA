@@ -9,7 +9,6 @@ export interface ExecutionWorkflow { workflow_id: string; objective: string; exe
 export interface DecisionContext { event: string; rationale: string; evidence: { source: string; observation: string }[] }
 export interface Artifact { artifact_id: string; artifact_type: string; summary: string; source: string }
 export interface MemoryState { active: string[]; thread: string[]; persistent: string[] }
-export interface ObservationState { summary: string; important_information: string; conclusion: string; raw: unknown }
 export interface ThinkingState { active: boolean; model: string; text: string; started_at: string | null }
 export interface ConcurrentTask { task_id: string; objective: string; status: string; dependencies: string[]; blockers?: string[]; event?: string; error?: string; workflow_id?: string; workflow?: ExecutionWorkflow | null }
 export interface ConcurrentEvent { time: string; task_id: string; event: string; [key: string]: unknown }
@@ -25,7 +24,6 @@ export interface RuntimeSnapshot {
   decision: DecisionContext | null
   artifacts: Artifact[]
   memory: MemoryState
-  observation?: ObservationState
   execution_memory?: unknown
   thinking?: ThinkingState
   concurrent_flow?: ConcurrentFlow
