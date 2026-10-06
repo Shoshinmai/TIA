@@ -14,6 +14,7 @@ from typing import Any
 from aiohttp import web
 
 from llm.llmclient import reset_stream_listener, set_stream_listener
+from output.models import OUTPUT_FALLBACK_MESSAGES, OutputType
 from runtime.concurrent_task_executor import (
     reset_cancel_check,
     reset_concurrent_event_listener,
@@ -29,6 +30,19 @@ HOST = os.getenv("TIA_HOST", "127.0.0.1")
 PORT = int(os.getenv("TIA_PORT", "8787"))
 
 
+def synthesized_output(output_type: str, message: str) -> dict[str, Any]:
+    """Build a UI-facing agent output for terminal paths the graph cannot reach.
+
+    Cancellation and unexpected runtime failures unwind the graph before the
+    output node runs, so the backend supplies the deterministic message the UI
+    renders in place of a generated one.
+    """
+    return {
+        "output_type": output_type,
+        "message": preview_text(message, limit=2000) or OUTPUT_FALLBACK_MESSAGES[OutputType(output_type)],
+    }
+
+
 class TaskSession:
     def __init__(self, goal: str) -> None:
         self.task_id = str(uuid.uuid4())
@@ -42,6 +56,9 @@ class TaskSession:
             "execution_workflow": None,
             "terminal": [],
             "decision": None,
+            "agent_output": None,
+            "run_complete": False,
+            "agent_output": None,
             "artifacts": [],
             "memory": {"active": [], "thread": [], "persistent": []},
             "execution_memory": [],
@@ -95,11 +112,22 @@ class TaskSession:
             self.error = str(error)
             self.snapshot["mode"] = "error"
             self.snapshot["last_event"] = "task_failed"
+            self.snapshot["run_complete"] = True
             self.snapshot["backend"] = {"connected": True, "running": False, "error": str(error)}
-            self.snapshot["terminal"] = [
-                *self.snapshot["terminal"],
-                {"time": stamp(), "kind": "error", "text": f"TASK_FAILED  /  {error}"},
-            ]
+            self.snapshot["agent_output"] = synthesized_output(
+                "failed",
+                f"{OUTPUT_FALLBACK_MESSAGES[OutputType.FAILED]} {preview_text(str(error), limit=400)}".strip(),
+            )
+            self.snapshot["terminal"] = append_terminal(
+                self.snapshot["terminal"],
+                "error",
+                f"TASK_FAILED  /  {error}",
+            )[-80:]
+            self.snapshot["terminal"] = append_terminal(
+                self.snapshot["terminal"],
+                "error",
+                f"OUTPUT  /  FAILED  /  {self.snapshot['agent_output']['message']}",
+            )
             payload = dict(self.snapshot)
             subscribers = list(self.subscribers)
             loop = self.loop
@@ -112,12 +140,23 @@ class TaskSession:
         with self.lock:
             self.snapshot["mode"] = "finished"
             self.snapshot["last_event"] = "task_cancelled"
+            self.snapshot["run_complete"] = True
             self.snapshot["thinking"] = {**self.snapshot.get("thinking", {}), "active": False}
             self.snapshot["backend"] = {"connected": True, "running": False, "error": None}
-            self.snapshot["terminal"] = [
-                *self.snapshot["terminal"],
-                {"time": stamp(), "kind": "system", "text": "TASK_CANCELLED  /  Agent run cancelled by user."},
-            ][-80:]
+            self.snapshot["agent_output"] = synthesized_output(
+                "cancelled",
+                OUTPUT_FALLBACK_MESSAGES[OutputType.CANCELLED],
+            )
+            self.snapshot["terminal"] = append_terminal(
+                self.snapshot["terminal"],
+                "system",
+                "TASK_CANCELLED  /  Agent run cancelled by user.",
+            )
+            self.snapshot["terminal"] = append_terminal(
+                self.snapshot["terminal"],
+                "system",
+                f"OUTPUT  /  CANCELLED  /  {self.snapshot['agent_output']['message']}",
+            )
             payload = dict(self.snapshot)
             subscribers = list(self.subscribers)
             loop = self.loop
@@ -348,6 +387,26 @@ def snapshot_from_state(state: dict[str, Any], previous: dict[str, Any]) -> dict
         rationale = preview_text(decision.get("rationale", "") or "", limit=200)
         terminal = append_terminal(terminal, "system", f"DECISION  /  {decision.get('event') or ''}  /  {rationale or 'Critic evaluated runtime evidence.'}")
 
+    runtime_metadata = runtime.get("metadata") or {}
+    conflict = runtime_metadata.get("goal_completion_unresolved_conflict")
+    goal_completion_warning = previous.get("goal_completion_warning")
+    if conflict and not goal_completion_warning:
+        reasons = conflict if isinstance(conflict, list) else [conflict]
+        terminal = append_terminal(
+            terminal,
+            "error",
+            "GOAL_COMPLETION_ACCEPTED_AFTER_CONFLICT  /  "
+            + preview_text("; ".join(str(reason) for reason in reasons), limit=300),
+        )
+        goal_completion_warning = True
+
+    agent_output = model_dict(state.get("agent_output"))
+    previous_output = previous.get("agent_output")
+    if agent_output and not previous_output:
+        output_type = (agent_output.get("output_type") or "final").upper()
+        message = preview_text(agent_output.get("message", "") or "", limit=400)
+        terminal = append_terminal(terminal, "success" if output_type == "FINAL" else "system", f"OUTPUT  /  {output_type}  /  {message or 'Output generated.'}")
+
     active_memory = model_dict(state.get("active_memory")) or {}
     thread_memory = model_dict(state.get("thread_memory")) or {}
     persistent_memory = model_dict(state.get("persistent_memory")) or {}
@@ -388,11 +447,14 @@ def snapshot_from_state(state: dict[str, Any], previous: dict[str, Any]) -> dict
         "mode": runtime.get("mode", previous.get("mode", "initializing")),
         "last_event": runtime.get("last_event", previous.get("last_event")),
         "iteration": runtime.get("iteration", previous.get("iteration", 0)),
+        "run_complete": bool(previous.get("run_complete", False)),
         "goal": state.get("goal", previous.get("goal", "")),
         "task_plan": plan,
         "execution_workflow": workflow or latest_workflow,
         "terminal": terminal[-80:],
         "decision": decision or previous.get("decision"),
+        "goal_completion_warning": goal_completion_warning or previous.get("goal_completion_warning"),
+        "agent_output": agent_output or previous.get("agent_output"),
         "artifacts": plain(state.get("artifact_references", previous.get("artifacts", []))),
         "memory": {
             "active": memory_items(active_memory),
@@ -486,6 +548,7 @@ async def run_graph_async(session: TaskSession) -> None:
         session.runner_task = None
         session.runner_loop = None
         with session.lock:
+            session.snapshot["run_complete"] = True
             session.snapshot["backend"] = {"connected": True, "running": False, "error": session.error}
             payload = dict(session.snapshot)
             subscribers = list(session.subscribers)
@@ -560,7 +623,11 @@ async def events(request: web.Request) -> web.StreamResponse:
         while True:
             payload = await queue.get()
             await response.write(f"data: {json.dumps(plain(payload))}\n\n".encode())
-            if payload.get("mode") in {"finished", "error"}:
+            # The stream must stay open until the whole run is finished.
+            # The runtime reaches FINISHED before the output node has
+            # generated the user-facing result, so closing on mode alone
+            # drops the final output on the floor.
+            if payload.get("run_complete") or payload.get("mode") == "error":
                 break
     except (asyncio.CancelledError, ConnectionResetError):
         pass

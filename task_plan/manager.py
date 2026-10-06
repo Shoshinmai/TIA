@@ -253,6 +253,39 @@ class TaskPlanManager:
         task.blockers.clear()
 
     @staticmethod
+    def retry_completed_task(
+        *,
+        plan: TaskPlan,
+        task_id: str,
+    ) -> None:
+        """
+        Requeue a completed task when the Critic determines that
+        the latest execution did not actually satisfy the objective.
+
+        Lifecycle:
+
+            COMPLETED
+                ↓
+            READY
+                ↓
+            new execution wave
+        """
+
+        task = TaskPlanManager._find_task(
+            plan=plan,
+            task_id=task_id,
+        )
+
+        if task.status != TaskItemStatus.COMPLETED:
+            raise ValueError(
+                f"Task '{task_id}' cannot be retried because its "
+                f"current status is '{task.status}'. "
+                "Only COMPLETED tasks may enter completed retry."
+            )
+
+        task.status = TaskItemStatus.READY
+
+    @staticmethod
     def complete_task(
         *,
         plan: TaskPlan,

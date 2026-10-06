@@ -7,6 +7,8 @@ export interface TaskPlan { plan_id: string; goal: string; status: string; tasks
 export interface ExecutionStep { step_id: string; description: string; capability: string; arguments: Record<string, unknown>; status: StepStatus }
 export interface ExecutionWorkflow { workflow_id: string; objective: string; execution_strategy: string; status: string; steps: ExecutionStep[] }
 export interface DecisionContext { event: string; rationale: string; evidence: { source: string; observation: string }[] }
+export type OutputType = 'final' | 'blocked' | 'failed' | 'cancelled'
+export interface AgentOutput { output_type: OutputType; message: string }
 export interface Artifact { artifact_id: string; artifact_type: string; summary: string; source: string }
 export interface MemoryState { active: string[]; thread: string[]; persistent: string[] }
 export interface ThinkingState { active: boolean; model: string; text: string; started_at: string | null }
@@ -22,6 +24,8 @@ export interface RuntimeSnapshot {
   execution_workflow: ExecutionWorkflow | null
   terminal: { time: string; kind: 'system' | 'command' | 'success' | 'error'; text: string }[]
   decision: DecisionContext | null
+  agent_output?: AgentOutput | null
+  run_complete?: boolean
   artifacts: Artifact[]
   memory: MemoryState
   execution_memory?: unknown
@@ -43,7 +47,7 @@ const stamp = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute:
 
 const emptySnapshot = (): RuntimeSnapshot => ({
   mode: 'initializing', last_event: null, iteration: 0, goal: '', task_plan: null, execution_workflow: null,
-  terminal: [{ time: stamp(), kind: 'system', text: 'Backend bridge ready. Awaiting a runtime task.' }], decision: null, artifacts: [],
+  terminal: [{ time: stamp(), kind: 'system', text: 'Backend bridge ready. Awaiting a runtime task.' }], decision: null, agent_output: null, run_complete: false, artifacts: [],
   memory: { active: [], thread: [], persistent: [] },
   backend: { connected: false, running: false, error: null },
   thinking: { active: false, model: '', text: '', started_at: null },
@@ -104,7 +108,10 @@ export class HttpBridge implements TiaBridge {
       this.events.onmessage = (event) => {
         const snapshot = JSON.parse(event.data) as RuntimeSnapshot
         this.publish(snapshot)
-        if (snapshot.mode === 'finished' || snapshot.mode === 'error') {
+        // The runtime reaches FINISHED before the output node has
+        // produced the final result, so the stream must stay open
+        // until the whole run is complete.
+        if (snapshot.run_complete || snapshot.mode === 'error') {
           this.events?.close()
           this.events = null
         }

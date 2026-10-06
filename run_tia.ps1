@@ -86,6 +86,41 @@ if (-not $ready) {
 Write-Host "[TIA] Backend online at http://127.0.0.1:$BackendPort (PID $($backend.Id))" -ForegroundColor Green
 
 # =============================================================
+# 3a. Report the shell used by the run_terminal capability.
+#
+# Agent-generated commands use POSIX syntax. On Windows that
+# requires bash, which a Git installation provides without
+# necessarily exposing it on PATH.
+# =============================================================
+
+$bashCommand = Get-Command "bash" -ErrorAction SilentlyContinue
+if ($bashCommand) {
+    Write-Host "[TIA] Terminal shell: bash ($($bashCommand.Source))" -ForegroundColor Green
+}
+else {
+    $gitCommand = Get-Command "git" -ErrorAction SilentlyContinue
+    $gitBash = $null
+    if ($gitCommand) {
+        $gitRoot = Split-Path -Parent (Split-Path -Parent $gitCommand.Source)
+        foreach ($candidate in @("$gitRoot\bin\bash.exe", "$gitRoot\usr\bin\bash.exe")) {
+            if (Test-Path $candidate) { $gitBash = $candidate; break }
+        }
+    }
+    if (-not $gitBash) {
+        foreach ($candidate in @("C:\Program Files\Git\bin\bash.exe", "C:\Program Files (x86)\Git\bin\bash.exe")) {
+            if (Test-Path $candidate) { $gitBash = $candidate; break }
+        }
+    }
+    if ($gitBash) {
+        Write-Host "[TIA] Terminal shell: bash ($gitBash)" -ForegroundColor Green
+    }
+    else {
+        Write-Host "[TIA] WARNING: bash was not found. run_terminal will fall back to PowerShell." -ForegroundColor Yellow
+        Write-Host "[TIA] WARNING: POSIX-only commands such as printf will fail without bash." -ForegroundColor Yellow
+    }
+}
+
+# =============================================================
 # 3b. Make sure a local Ollama server is reachable.
 # =============================================================
 

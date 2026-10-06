@@ -111,8 +111,6 @@ class OutputGenerator:
         message = await call_nvidia(
             prompt,
             "nvidia/nemotron-3.5-lightning-30b-a3b",
-            subagent=False,
-            state_model = AgentOutput
         )
 
         if not isinstance(

@@ -91,14 +91,34 @@ async def process_tool_result(
     # than destroying the complete processing result.
     # ==========================================================
 
-    proposal = await condense_memory(
-        goal=state["goal"],
-        active_memory=format_active_memory(
-            state["active_memory"],
-        ),
-        formatted_observation=formatted_observation,
-        tool_name=normalized.context.tool_name,
-    )
+    try:
+
+        proposal = await condense_memory(
+            goal=state["goal"],
+            active_memory=format_active_memory(
+                state["active_memory"],
+            ),
+            formatted_observation=formatted_observation,
+            tool_name=normalized.context.tool_name,
+        )
+
+    except Exception as error:
+
+        # ------------------------------------------------------
+        # Condenser failure must degrade to an empty proposal.
+        #
+        # The normalized result and artifact decision produced
+        # above are still valid and must continue through the
+        # Runtime Processing Pipeline.
+        # ------------------------------------------------------
+
+        print(
+            "\n[MEMORY CONDENSER] "
+            "Condensation failed. Continuing without a memory "
+            f"update. Reason: {error}"
+        )
+
+        proposal = MemoryUpdateProposal()
 
     # ==========================================================
     # 5. Return complete RuntimeProcessingResult

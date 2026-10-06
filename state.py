@@ -4,6 +4,7 @@ from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 
 from critics.integration import CriticRuntimeEvent
+from critics.models import CriticOutput
 from models import (
     ActiveTaskMemory,
     ArtifactReference,
@@ -54,6 +55,10 @@ class TerminalState(TypedDict):
     execution_workflow: ExecutionWorkflow | None
     
     critic_runtime_event: CriticRuntimeEvent | None
+    
+    critic_output: CriticOutput | None
+    
+    critic_rejection: list[str] | None
     
     agent_output: AgentOutput | None
 

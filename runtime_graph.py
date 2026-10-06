@@ -163,11 +163,6 @@ builder.add_node(
 # OUTPUT
 
 builder.add_node(
-    "runtime_output",
-    runtime_output_node,
-)
-
-builder.add_node(
     "output",
     runtime_output_node,
 )
@@ -303,6 +298,22 @@ builder.add_conditional_edges(
     "runtime_critic",
     runtime_stage_router,
     runtime_stage_mapping(),
+)
+
+
+# ==========================================================
+# Output (terminal boundary)
+#
+# RuntimeStage.TERMINATE / RuntimeStage.ERROR
+#       ↓
+# output
+#       ↓
+# END
+# ==========================================================
+
+builder.add_edge(
+    "output",
+    END,
 )
 
 

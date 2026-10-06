@@ -140,3 +140,22 @@ class AgentOutput(BaseModel):
     message: str = Field(
         min_length=1,
     )
+
+
+OUTPUT_FALLBACK_MESSAGES: dict[OutputType, str] = {
+    OutputType.FINAL: (
+        "The requested work was completed, "
+        "but I could not generate the final summary."
+    ),
+    OutputType.BLOCKED: (
+        "I could not complete the request because "
+        "the current task state is blocked."
+    ),
+    OutputType.FAILED: (
+        "I could not complete the requested work."
+    ),
+    OutputType.CANCELLED: (
+        "The agent run was cancelled before the "
+        "requested work was completed."
+    ),
+}
