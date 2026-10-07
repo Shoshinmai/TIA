@@ -17,6 +17,20 @@ if (-not (Test-Path $python)) {
 }
 
 # =============================================================
+# Pause helper.
+#
+# Read-Host throws when stdin is redirected (non-interactive
+# launch), and with $ErrorActionPreference = "Stop" that aborts
+# the failure block before it can reach exit 1 -- the script
+# would then keep going and start the UI after reporting an
+# error. Pause only when a prompt is actually possible.
+# =============================================================
+
+function Read-TiaPause {
+    try { Read-Host | Out-Null } catch { }
+}
+
+# =============================================================
 # 1. Free the backend port from a stale TIA backend process.
 # =============================================================
 
@@ -79,7 +93,7 @@ if (-not $ready) {
         Get-Content $errLog -Tail 40 | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
     }
     Write-Host "[TIA] Run aborted. Press Enter to close..." -ForegroundColor Yellow
-    Read-Host | Out-Null
+    Read-TiaPause
     exit 1
 }
 
@@ -233,8 +247,10 @@ if ($omniKey) {
     $omniHeaders["Authorization"] = "Bearer $omniKey"
 }
 
+$omniModelsRaw = $null
+
 try {
-    Invoke-WebRequest -Uri "$omniBase/models" -Headers $omniHeaders -UseBasicParsing -TimeoutSec 5 | Out-Null
+    $omniModelsRaw = (Invoke-WebRequest -Uri "$omniBase/models" -Headers $omniHeaders -UseBasicParsing -TimeoutSec 5).Content
     Write-Host "[TIA] OmniRoute is online at $omniBase" -ForegroundColor Green
 }
 catch {
@@ -256,8 +272,88 @@ catch {
 
     Write-Host "[TIA] ERROR: TIA routes every LLM node through OmniRoute, so no node will produce output." -ForegroundColor Red
     Write-Host "[TIA] Start OmniRoute, then re-run this script. Press Enter to close..." -ForegroundColor Yellow
-    Read-Host | Out-Null
+    Read-TiaPause
     exit 1
+}
+
+# ------------------------------------------------------------
+# 3d. Every model TIA can request must resolve to a catalog
+#     entry, including the fallback used when a call fails.
+#     TIA's model IDs are only usable through OMNIROUTE_MODEL_MAP:
+#     the raw IDs are absent from the catalog by design, so a
+#     missing mapping or a bad gateway catalog means every node
+#     fails with no working fallback.
+# ------------------------------------------------------------
+
+$omniCatalog = $null
+
+try {
+    $omniCatalog = @(($omniModelsRaw | ConvertFrom-Json).data | ForEach-Object { [string]$_.id })
+}
+catch {
+    Write-Host "[TIA] WARNING: Could not parse the OmniRoute model catalog; skipping model-target validation." -ForegroundColor Yellow
+}
+
+if ($omniCatalog) {
+    $omniMapRaw = $env:OMNIROUTE_MODEL_MAP
+    if (-not $omniMapRaw) { $omniMapRaw = Read-TiaEnvValue "OMNIROUTE_MODEL_MAP" }
+
+    $omniMap = @{}
+    if ($omniMapRaw) {
+        try {
+            $parsedMap = $omniMapRaw | ConvertFrom-Json
+            foreach ($entry in $parsedMap.PSObject.Properties) {
+                $omniMap[$entry.Name] = [string]$entry.Value
+            }
+        }
+        catch {
+            Write-Host "[TIA] ERROR: OMNIROUTE_MODEL_MAP in .env is not a valid JSON object." -ForegroundColor Red
+            Write-Host '[TIA] ERROR: Expected {"tia/model": "provider/tia/model"} entries.' -ForegroundColor Red
+            Read-TiaPause
+            exit 1
+        }
+    }
+
+    # Mirrors the model IDs in nodes/planner.py, nodes/critics.py,
+    # nodes/task_executor.py, task_executor/task_worker.py,
+    # output/generator.py and result_processing/memory_condenser.py.
+    $tiaModels = @(
+        "nvidia/nemotron-3.5-lightning-30b-a3b",
+        "nvidia/nemotron-3-super-120b-a12b",
+        "meta/muse-glimmer-30b",
+        "openai/gpt-oss-20b"
+    )
+
+    $missing = @()
+    foreach ($model in $tiaModels) {
+        $target = $omniMap[$model]
+        if (-not $target) { $target = $model }
+
+        if ($omniCatalog -notcontains $target) {
+            $missing += [pscustomobject]@{ Model = $model; Target = $target }
+        }
+    }
+
+    if ($missing.Count -gt 0) {
+        Write-Host "[TIA] ERROR: OmniRoute has no catalog entry for these models TIA will request:" -ForegroundColor Red
+        foreach ($entry in $missing) {
+            if ($entry.Model -eq $entry.Target) {
+                Write-Host "[TIA] ERROR:   $($entry.Model) -- add an OMNIROUTE_MODEL_MAP entry in .env." -ForegroundColor Red
+            }
+            else {
+                Write-Host "[TIA] ERROR:   $($entry.Model) -> $($entry.Target) -- OMNIROUTE_MODEL_MAP target is not in the catalog." -ForegroundColor Red
+            }
+        }
+
+        Write-Host "[TIA] ERROR: TIA routes every LLM node through OmniRoute, so no node will produce output." -ForegroundColor Red
+        Write-Host "[TIA] ERROR: Fix OMNIROUTE_MODEL_MAP in .env, then re-run this script. Press Enter to close..." -ForegroundColor Yellow
+        Read-TiaPause
+        exit 1
+    }
+
+    $fallbackTarget = $omniMap["openai/gpt-oss-20b"]
+    if (-not $fallbackTarget) { $fallbackTarget = "openai/gpt-oss-20b" }
+    Write-Host "[TIA] OmniRoute catalog OK: $($tiaModels.Count) TIA models resolve; fallback -> $fallbackTarget" -ForegroundColor Green
 }
 
 # =============================================================
@@ -277,7 +373,7 @@ try {
     & npm run dev -- --host 127.0.0.1 --port $UiPort
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[TIA] Vite dev server exited with code $LASTEXITCODE. Press Enter to close..." -ForegroundColor Yellow
-        Read-Host | Out-Null
+        Read-TiaPause
     }
 }
 finally {

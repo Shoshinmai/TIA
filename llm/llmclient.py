@@ -4,18 +4,20 @@ import asyncio
 import json
 import re
 import os
+import sys
 from contextvars import ContextVar
 from functools import lru_cache
 from typing import Any, Optional
 
 from dotenv import load_dotenv
-import httpx
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
+import openai
+from langchain_core.messages import AIMessageChunk
 from langchain_ollama import ChatOllama
 from langchain_groq import ChatGroq
+from langchain_core.outputs import ChatGenerationChunk
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.exceptions import OutputParserException
-from langchain_core.utils.function_calling import convert_to_openai_tool
+from langchain_openai import ChatOpenAI
 
 from tools import TOOLS
 
@@ -29,6 +31,27 @@ from tenacity import (
 
 
 load_dotenv()
+
+
+def force_utf8_console() -> None:
+    """Make console output tolerate model text outside the local codepage.
+
+    Windows shells default to cp1252, so a single emoji or arrow in streamed
+    model output otherwise raises UnicodeEncodeError and kills the run
+    mid-stream. Streams differ across launchers (redirected pipes, IDE
+    runners, pytest capture) and some expose no ``reconfigure`` at all, so a
+    stream that cannot be adjusted is left alone rather than allowed to break
+    the run.
+    """
+
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError, ValueError):
+            pass
+
+
+force_utf8_console()
 
 
 StreamListener = Any
@@ -47,7 +70,7 @@ def reset_stream_listener(token) -> None:
 
 
 # =============================================================
-# OMNIROUTE OPENAI-COMPATIBLE ADAPTER
+# OMNIROUTE OPENAI-COMPATIBLE CLIENT
 # =============================================================
 
 
@@ -81,13 +104,24 @@ def _parse_omniroute_model_map(raw_model_map: str) -> dict[str, str]:
     except json.JSONDecodeError as error:
         raise ValueError(
             "OMNIROUTE_MODEL_MAP must be a JSON object mapping TIA model "
-            "IDs to OmniRoute model IDs."
+            "IDs to OmniRoute model IDs, for example "
+            '{"openai/gpt-oss-20b": "cfp/openai/gpt-oss-20b"}. '
+            f"JSON decode failed: {error}"
         ) from error
 
     if not isinstance(model_map, dict):
-        raise ValueError("OMNIROUTE_MODEL_MAP must be a JSON object.")
+        raise ValueError(
+            "OMNIROUTE_MODEL_MAP must be a JSON object mapping TIA model "
+            "IDs to OmniRoute model IDs, for example "
+            '{"openai/gpt-oss-20b": "cfp/openai/gpt-oss-20b"}.'
+        )
 
     return model_map
+
+
+# Model IDs already announced as unmapped, so a long run warns once per model
+# instead of on every request.
+_UNMAPPED_MODEL_WARNED: set[str] = set()
 
 
 def _omniroute_model(model: str) -> str:
@@ -103,6 +137,15 @@ def _omniroute_model(model: str) -> str:
     model_map = _parse_omniroute_model_map(
         os.getenv("OMNIROUTE_MODEL_MAP", "")
     )
+
+    if model not in model_map and model not in _UNMAPPED_MODEL_WARNED:
+        _UNMAPPED_MODEL_WARNED.add(model)
+        print(
+            f"\n⚠️ [OmniRoute] No OMNIROUTE_MODEL_MAP entry for {model!r}; "
+            "sending the raw ID. Add a mapping in .env if OmniRoute rejects "
+            "it (TIA's catalog uses mapped targets such as "
+            '"cfp/openai/gpt-oss-20b").'
+        )
 
     mapped_model = model_map.get(model, model)
     if not isinstance(mapped_model, str) or not mapped_model.strip():
@@ -131,155 +174,85 @@ def _omniroute_reasoning_content(delta: dict[str, Any]) -> str:
     )
 
 
-class _OmniRouteChat:
-    """Small async LangChain-compatible adapter for OmniRoute's OpenAI API."""
+def _omniroute_api_key() -> str:
+    """Bearer token expected by the local OmniRoute gateway."""
 
-    def __init__(
+    return (
+        os.getenv("OMNIROUTE_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+        or "omniroute"
+    )
+
+
+class _OmniRouteChatOpenAI(ChatOpenAI):
+    """ChatOpenAI that keeps OmniRoute's non-standard reasoning fields.
+
+    ChatOpenAI only extracts fields defined by the official OpenAI
+    specification, so ``reasoning_content``/``reasoning``/``reasoning_details``
+    from reasoning models behind the gateway would be dropped and the live
+    thinking stream would go silent. Subclassing leaves every other behaviour
+    (callbacks -> LangSmith tracing, tool calling, retries) untouched.
+    """
+
+    def _convert_chunk_to_generation_chunk(
         self,
-        *,
-        model: str,
-        temperature: float = 0.2,
-        timeout: float = 60,
-        stream_timeout: float = 600,
-        top_p: float = 0.95,
-        max_completion_tokens: int = 16384,
-        tools: list[dict[str, Any]] | None = None,
-    ):
-        self.requested_model = model
-        self.model = _omniroute_model(model)
-        self.temperature = temperature
-        self.timeout = timeout
-        self.stream_timeout = stream_timeout
-        self.top_p = top_p
-        self.max_completion_tokens = max_completion_tokens
-        self.tools = tools
-
-    def _headers(self) -> dict[str, str]:
-        api_key = os.getenv("OMNIROUTE_API_KEY") or os.getenv("OPENAI_API_KEY")
-        headers = {"Content-Type": "application/json"}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        return headers
-
-    def _client(self, *, streaming: bool) -> httpx.AsyncClient:
-        """Build a client whose read budget fits the expected call shape.
-
-        Streaming responses can stay silent for a long time while a reasoning
-        model works, so the read timeout must be far larger than the budget for
-        a non-streaming request.
-        """
-
-        timeout = httpx.Timeout(
-            connect=10.0,
-            read=self.stream_timeout if streaming else self.timeout,
-            write=self.timeout,
-            pool=self.timeout,
-        )
-        return httpx.AsyncClient(timeout=timeout)
-
-    def _payload(self, prompt: str, *, stream: bool) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": self.temperature,
-            "top_p": self.top_p,
-            "max_completion_tokens": self.max_completion_tokens,
-            "stream": stream,
-        }
-        if self.tools:
-            payload["tools"] = self.tools
-        return payload
-
-    def bind_tools(self, tools) -> "_OmniRouteChat":
-        # Pass the *unmapped* model so the copy is resolved exactly once,
-        # instead of re-applying OMNIROUTE_MODEL_MAP to an already mapped ID.
-        return _OmniRouteChat(
-            model=self.requested_model,
-            temperature=self.temperature,
-            timeout=self.timeout,
-            stream_timeout=self.stream_timeout,
-            top_p=self.top_p,
-            max_completion_tokens=self.max_completion_tokens,
-            tools=[convert_to_openai_tool(tool) for tool in tools],
+        chunk: dict,
+        default_chunk_class: type,
+        base_generation_info: dict | None,
+    ) -> ChatGenerationChunk | None:
+        generation_chunk = super()._convert_chunk_to_generation_chunk(
+            chunk,
+            default_chunk_class,
+            base_generation_info,
         )
 
-    async def astream(self, prompt: str):
-        """Yield LangChain chunks as OmniRoute sends OpenAI SSE events."""
+        if generation_chunk is None:
+            return None
 
-        async with self._client(streaming=True) as client:
-            async with client.stream(
-                "POST",
-                f"{_omniroute_base_url()}/chat/completions",
-                headers=self._headers(),
-                json=self._payload(prompt, stream=True),
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
+        choices = chunk.get("choices") or []
+        delta = (choices[0].get("delta") or {}) if choices else {}
 
-                    data = line[5:].strip()
-                    if data == "[DONE]":
-                        break
-                    if not data:
-                        continue
-
-                    try:
-                        event = json.loads(data)
-                        delta = event["choices"][0].get("delta", {})
-                    except (IndexError, KeyError, TypeError, json.JSONDecodeError):
-                        continue
-
-                    content = delta.get("content") or ""
-                    if isinstance(content, list):
-                        content = "".join(
-                            item.get("text", "") if isinstance(item, dict) else str(item)
-                            for item in content
-                        )
-
-                    additional_kwargs: dict[str, Any] = {}
-                    reasoning = _omniroute_reasoning_content(delta)
-                    if reasoning:
-                        additional_kwargs["reasoning_content"] = reasoning
-
-                    if content or additional_kwargs:
-                        yield AIMessageChunk(
-                            content=content,
-                            additional_kwargs=additional_kwargs,
-                        )
-
-    async def ainvoke(self, prompt: str) -> AIMessage:
-        async with self._client(streaming=False) as client:
-            response = await client.post(
-                f"{_omniroute_base_url()}/chat/completions",
-                headers=self._headers(),
-                json=self._payload(prompt, stream=False),
-            )
-            response.raise_for_status()
-
-        body = response.json()
-        message = body["choices"][0]["message"]
-        content = message.get("content") or ""
-        tool_calls = []
-        for index, tool_call in enumerate(message.get("tool_calls", [])):
-            function = tool_call.get("function", {})
-            arguments = function.get("arguments", "{}")
-            try:
-                arguments = json.loads(arguments)
-            except (TypeError, json.JSONDecodeError):
-                arguments = {}
-            # LangChain matches tool results by id, so synthesise one when a
-            # provider omits it instead of emitting a null id.
-            tool_calls.append(
-                {
-                    "name": function.get("name", ""),
-                    "args": arguments,
-                    "id": tool_call.get("id") or f"call_{index}",
-                    "type": "tool_call",
-                }
+        reasoning = _omniroute_reasoning_content(delta)
+        if reasoning and isinstance(generation_chunk.message, AIMessageChunk):
+            generation_chunk.message.additional_kwargs["reasoning_content"] = (
+                reasoning
             )
 
-        return AIMessage(content=content, tool_calls=tool_calls)
+        return generation_chunk
+
+
+def _omniroute_chat(
+    model: str,
+    *,
+    temperature: float = 0.2,
+    timeout: float = 60,
+    stream_timeout: float = 600,
+    top_p: float = 0.95,
+    max_completion_tokens: int = 16384,
+) -> ChatOpenAI:
+    """Build a ChatOpenAI client wired to the local OmniRoute gateway.
+
+    ``timeout`` is the HTTP read budget, which must be far larger for
+    streaming than for a plain request because a reasoning model can stay
+    silent while it works; ``stream_timeout`` is the silence allowed between
+    two streamed chunks. SDK-level retries are disabled so the tenacity
+    wrapper around ``_aexecute_nvidia_call`` stays the single retry layer and
+    its restart banner keeps matching the restarted output.
+    """
+
+    return _OmniRouteChatOpenAI(
+        name=f"omniroute/{model}",
+        model=_omniroute_model(model),
+        base_url=_omniroute_base_url(),
+        api_key=_omniroute_api_key(),
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_completion_tokens,
+        timeout=timeout,
+        stream_chunk_timeout=stream_timeout,
+        stream_usage=False,
+        max_retries=0,
+    )
 
 
 # ==============================================================
@@ -1325,8 +1298,8 @@ def _log_omniroute_retry(retry_state) -> None:
 @retry(
     retry=retry_if_exception_type(
         (
-            httpx.TimeoutException,
-            httpx.TransportError,
+            openai.APIConnectionError,
+            TimeoutError,
         )
     ),
     stop=stop_after_attempt(2),
@@ -1346,13 +1319,13 @@ async def _aexecute_nvidia_call(
     tool,
 ):
 
-    llm = _OmniRouteChat(
-        model=model,
-        temperature=0.2,
-        timeout=60,
-        stream_timeout=600,
-        top_p=0.95,
-        max_completion_tokens=16384,
+    stream_llm = _omniroute_chat(
+        model,
+        timeout=600,
+    )
+
+    invoke_llm = _omniroute_chat(
+        model,
     )
 
     # ----------------------------------------------------------
@@ -1378,7 +1351,7 @@ async def _aexecute_nvidia_call(
 
         full_content = (
             await _stream_llm_response(
-                llm=llm,
+                llm=stream_llm,
                 prompt=structured_prompt,
                 show_reasoning=True,
                 model_label=model,
@@ -1393,7 +1366,7 @@ async def _aexecute_nvidia_call(
         return await _robust_pydantic_parse_async(
             parser=parser,
             raw_content=full_content,
-            llm_instance=llm,
+            llm_instance=invoke_llm,
             original_prompt=structured_prompt,
         )
 
@@ -1403,7 +1376,7 @@ async def _aexecute_nvidia_call(
 
     if tool:
 
-        llm_with_tools = llm.bind_tools(
+        llm_with_tools = invoke_llm.bind_tools(
             TOOLS
         )
 
@@ -1416,7 +1389,7 @@ async def _aexecute_nvidia_call(
     # ----------------------------------------------------------
 
     return await _stream_llm_response(
-        llm=llm,
+        llm=stream_llm,
         prompt=prompt,
         show_reasoning=True,
         model_label=model,

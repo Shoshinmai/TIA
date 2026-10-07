@@ -13,7 +13,11 @@ from typing import Any
 
 from aiohttp import web
 
-from llm.llmclient import reset_stream_listener, set_stream_listener
+from llm.llmclient import (
+    force_utf8_console,
+    reset_stream_listener,
+    set_stream_listener,
+)
 from output.models import OUTPUT_FALLBACK_MESSAGES, OutputType
 from runtime.concurrent_task_executor import (
     reset_cancel_check,
@@ -24,6 +28,9 @@ from runtime.concurrent_task_executor import (
 from runtime.nodes import runtime_stage_router
 from runtime.stages import RuntimeStage
 from runtime_graph import runtime_graph
+
+
+force_utf8_console()
 
 
 HOST = os.getenv("TIA_HOST", "127.0.0.1")
