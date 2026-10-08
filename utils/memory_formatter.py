@@ -155,9 +155,24 @@ def format_task_plan(
 
     for task in task_plan.tasks:
         sections.append(f"- [{task.status.value}] {task.objective}")
+        sections.append(f"  id: {task.task_id}")
 
         if task.dependencies:
             sections.append(f"  depends on: {', '.join(task.dependencies)}")
+
+        if task.success_criteria:
+            sections.append("  success criteria:")
+            for criterion in task.success_criteria:
+                sections.append(f"    - {criterion}")
+            sections.append(
+                "  confirmed by critic: "
+                f"{'yes' if task.confirmed else 'no'}"
+            )
+
+        if task.evidence:
+            sections.append("  evidence:")
+            for entry in task.evidence:
+                sections.append(f"    - {entry}")
 
     return "\n".join(sections)
 

@@ -133,6 +133,15 @@ class PlannerTask(BaseModel):
         ),
     )
 
+    success_criteria: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Observable, evidence-checkable conditions that must hold "
+            "for this objective to be considered satisfied. The Runtime "
+            "tracks these mechanically; the Critic adjudicates them."
+        ),
+    )
+
 
 class TaskPlanningOutput(BaseModel):
     """

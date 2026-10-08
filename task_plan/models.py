@@ -71,6 +71,24 @@ class TaskItem(BaseModel):
         description="Conditions that indicate this objective has been completed.",
     )
 
+    confirmed: bool = Field(
+        default=False,
+        description=(
+            "Whether the Critic has explicitly confirmed this task's "
+            "success criteria are satisfied. Set only by a Critic "
+            "TASK_COMPLETED decision. Execution alone never sets it."
+        ),
+    )
+
+    evidence: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Task-attributed execution evidence recorded during "
+            "reconciliation: proposal evidence, artifact summaries, "
+            "and worker error information. Bounded per task."
+        ),
+    )
+
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Planner/runtime metadata associated with the task.",

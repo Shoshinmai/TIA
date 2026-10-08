@@ -29,6 +29,10 @@ from task_plan.models import TaskItemStatus
 GOAL_COMPLETION_REJECTION_COUNT_KEY = "goal_completion_rejection_count"
 GOAL_COMPLETION_CONFLICT_KEY = "goal_completion_unresolved_conflict"
 
+ADMISSION_REASON_PREFIX = "ADMISSION"
+INADMISSIBLE_DECISION_KEY = "inadmissible_decision_count"
+MAX_INADMISSIBLE_DECISIONS = 3
+
 
 def _evaluate_goal_completion_claim(
     *,
@@ -106,6 +110,12 @@ def _recover_from_rejected_goal_completion(
 
     Failed objectives are requeued for another execution attempt.
 
+    Completed-but-unconfirmed objectives stay in review: the plan
+    is exhausted, but the Critic must still issue TASK_COMPLETED
+    confirmations before a completion claim is admitted. The
+    reviewed execution boundary is preserved so the evidence under
+    review is not severed from the re-invocation.
+
     Any other unresolved state requires replanning, because a new
     strategy is needed rather than another identical attempt.
     """
@@ -115,6 +125,16 @@ def _recover_from_rejected_goal_completion(
         for task in task_plan.tasks
         if task.status == TaskItemStatus.FAILED
     ]
+
+    unconfirmed_tasks = [
+        task
+        for task in task_plan.tasks
+        if task.status == TaskItemStatus.COMPLETED
+        and task.success_criteria
+        and not task.confirmed
+    ]
+
+    preserve_outcome = False
 
     if failed_tasks:
 
@@ -133,6 +153,16 @@ def _recover_from_rejected_goal_completion(
             task.task_id
             for task in failed_tasks
         ]
+
+    elif unconfirmed_tasks:
+
+        event = RuntimeEvent.PLAN_EXHAUSTED
+
+        decision_scope = "plan"
+
+        target_task_ids = []
+
+        preserve_outcome = True
 
     else:
 
@@ -169,11 +199,18 @@ def _recover_from_rejected_goal_completion(
     ) + 1
 
     # ------------------------------------------------------
-    # The reviewed execution boundary must not survive into the
-    # recovery execution cycle.
+    # The reviewed execution boundary must not survive into a
+    # new execution or planning cycle. It is preserved when the
+    # runtime simply re-invokes the Critic for confirmations.
     # ------------------------------------------------------
 
-    state["plan_execution_outcome"] = None
+    preserved_outcome = state.get("plan_execution_outcome")
+
+    if not preserve_outcome:
+
+        state["plan_execution_outcome"] = None
+
+        preserved_outcome = None
 
     state["execution_workflow"] = None
 
@@ -192,10 +229,106 @@ def _recover_from_rejected_goal_completion(
     return {
         "runtime_state": runtime_state,
         "task_plan": task_plan,
-        "plan_execution_outcome": None,
+        "plan_execution_outcome": preserved_outcome,
         "execution_workflow": None,
         "critic_runtime_event": None,
         "critic_rejection": reasons,
+    }
+
+
+def _inadmissible_decision_recovery(
+    *,
+    state: TerminalState,
+    runtime_state,
+    reasons: list[str],
+) -> dict:
+    """
+    Deterministically recover when a Critic decision cannot be
+    safely applied to authoritative runtime state (I7).
+
+    Model-supplied targets, scopes, and lifecycle assumptions are
+    admitted only when they match authoritative state. An
+    inadmissible decision is refused without raising: the Critic
+    is re-invoked with the refusal reasons so it can correct the
+    decision.
+
+    The refusal loop is bounded. Each inadmissible decision
+    increments RuntimeState metadata. After
+    MAX_INADMISSIBLE_DECISIONS consecutive admissions failures
+    the runtime forces a REPLAN_REQUIRED cycle, so a
+    persistently misaddressed decision cannot loop forever.
+    """
+
+    count = (
+        int(
+            runtime_state.metadata.get(
+                INADMISSIBLE_DECISION_KEY,
+                0,
+            )
+        )
+        + 1
+    )
+
+    runtime_state.metadata[
+        INADMISSIBLE_DECISION_KEY
+    ] = count
+
+    print(
+        "[DECISION ADMISSION] "
+        f"Inadmissible decision ({count}:"
+        f"{MAX_INADMISSIBLE_DECISIONS}): "
+        + " | ".join(reasons)
+    )
+
+    if count >= MAX_INADMISSIBLE_DECISIONS:
+
+        runtime_state.metadata[
+            INADMISSIBLE_DECISION_KEY
+        ] = 0
+
+        decision_context = RuntimeDecisionContext(
+            rationale=(
+                "The Critic repeatedly produced decisions that "
+                "could not be applied to authoritative runtime "
+                "state. Planning must re-establish a plan the "
+                "Critic can address. "
+                + " ".join(reasons)
+            ),
+            evidence=[
+                RuntimeEvidence(
+                    source="runtime_decision_admission",
+                    observation=reason,
+                )
+                for reason in reasons
+            ],
+            decision_scope="plan",
+            target_task_ids=[],
+        )
+
+        RuntimeKernel.handle_event(
+            runtime_state=runtime_state,
+            event=RuntimeEvent.REPLAN_REQUIRED,
+            decision_context=decision_context,
+        )
+
+        print(
+            "[DECISION ADMISSION] "
+            "Admission budget exhausted. "
+            "Forcing REPLAN_REQUIRED."
+        )
+
+        return {
+            "runtime_state": runtime_state,
+            "task_plan": state.get("task_plan"),
+            "critic_runtime_event": None,
+            "critic_rejection": None,
+            "execution_workflow": None,
+        }
+
+    return {
+        "runtime_state": runtime_state,
+        "critic_runtime_event": None,
+        "critic_rejection": list(reasons),
     }
 
 
@@ -227,6 +360,20 @@ def runtime_planner_result_node(
         runtime_state=runtime_state,
         event=event,
     )
+
+    # ------------------------------------------------------
+    # Planning just produced (or replaced) the TaskPlan. Any
+    # previously completed plan status must not leak onto the
+    # new task set; unfinished plans are ACTIVE after a cycle.
+    # ------------------------------------------------------
+
+    task_plan = state.get("task_plan")
+
+    if task_plan is not None:
+
+        TaskPlanManager.activate_plan(
+            plan=task_plan,
+        )
 
     return {
         "runtime_state": runtime_state,
@@ -491,6 +638,19 @@ def runtime_critic_result_node(
     )
 
     if runtime_event is None:
+
+        rejection = state.get("critic_rejection") or []
+
+        if any(
+            str(reason).startswith(ADMISSION_REASON_PREFIX)
+            for reason in rejection
+        ):
+            return _inadmissible_decision_recovery(
+                state=state,
+                runtime_state=runtime_state,
+                reasons=list(rejection),
+            )
+
         raise ValueError("Critic did not produce a RuntimeEvent.")
 
     event = runtime_event.event
@@ -593,6 +753,11 @@ def runtime_critic_result_node(
                 task_id=current_task.task_id,
             )
 
+            TaskPlanManager.confirm_task(
+                plan=task_plan,
+                task_id=current_task.task_id,
+            )
+
             TaskPlanManager.update_task_readiness(
                 plan=task_plan,
             )
@@ -670,6 +835,60 @@ def runtime_critic_result_node(
             if TaskPlanManager.is_plan_complete(
                 plan=task_plan,
             ):
+
+                # --------------------------------------------------
+                # Ensure the plan lifecycle status reflects the
+                # completed task set before the goal gate runs.
+                # --------------------------------------------------
+
+                TaskPlanManager.complete_plan(
+                    plan=task_plan,
+                )
+
+                # --------------------------------------------------
+                # The Critic's TASK_COMPLETED targets are recorded
+                # as confirmations before the goal claim itself is
+                # evaluated by the deterministic gate.
+                # --------------------------------------------------
+
+                for task_id in (
+                    decision_context.target_task_ids or []
+                ):
+
+                    task = TaskPlanManager.get_task(
+                        plan=task_plan,
+                        task_id=task_id,
+                    )
+
+                    if task.status != TaskItemStatus.COMPLETED:
+                        raise ValueError(
+                            "TASK_COMPLETED target "
+                            f"'{task_id}' has status "
+                            f"'{task.status}'. Only COMPLETED "
+                            "tasks may be confirmed."
+                        )
+
+                    TaskPlanManager.confirm_task(
+                        plan=task_plan,
+                        task_id=task_id,
+                    )
+
+                rejection_required, rejection_reasons = (
+                    _evaluate_goal_completion_claim(
+                        state=state,
+                        task_plan=task_plan,
+                    )
+                )
+
+                if rejection_required:
+
+                    return _recover_from_rejected_goal_completion(
+                        state=state,
+                        task_plan=task_plan,
+                        runtime_state=runtime_state,
+                        reasons=rejection_reasons,
+                    )
+
                 RuntimeKernel.handle_event(
                     runtime_state=runtime_state,
                     event=RuntimeEvent.GOAL_COMPLETED,
@@ -678,7 +897,9 @@ def runtime_critic_result_node(
 
                 return {
                     "runtime_state": runtime_state,
+                    "task_plan": task_plan,
                     "critic_runtime_event": None,
+                    "critic_rejection": None,
                     "execution_workflow": None,
                 }
 
@@ -696,11 +917,26 @@ def runtime_critic_result_node(
         # NORMAL CASE:
         #
         # A real task is currently IN_PROGRESS, so complete it.
+        #
+        # The Critic chose TASK_COMPLETED, which is the semantic
+        # assertion that the objective is satisfied. Record the
+        # confirmation alongside the lifecycle completion.
         # ------------------------------------------------------
+
+        completing_task = TaskPlanManager.get_in_progress_task(
+            plan=task_plan,
+        )
 
         completion_result = complete_current_task(
             state,
         )
+
+        if completing_task is not None:
+
+            TaskPlanManager.confirm_task(
+                plan=task_plan,
+                task_id=completing_task.task_id,
+            )
 
         print("\n========== TASK PLAN COMPLETION ==========")
         print(f"Result: {completion_result}")
@@ -715,6 +951,10 @@ def runtime_critic_result_node(
         # ------------------------------------------------------
 
         if completion_result == "PLAN_COMPLETE":
+
+            TaskPlanManager.complete_plan(
+                plan=task_plan,
+            )
 
             RuntimeKernel.handle_event(
                 runtime_state=runtime_state,
@@ -852,7 +1092,14 @@ def runtime_critic_result_node(
         )
 
         if current_task is None:
-            raise ValueError("RETRY_TASK received without an IN_PROGRESS task.")
+            return _inadmissible_decision_recovery(
+                state=state,
+                runtime_state=runtime_state,
+                reasons=[
+                    "ADMISSION: RETRY_TASK requires an "
+                    "IN_PROGRESS task and target_task_ids."
+                ],
+            )
 
         TaskPlanManager.retry_task(
             plan=task_plan,
@@ -977,8 +1224,13 @@ def _apply_concurrent_critic_decision(
     if scope == "task":
 
         if not target_task_ids:
-            raise ValueError(
-                f"Concurrent Critic event '{event.value}' " "requires target_task_ids."
+            return _inadmissible_decision_recovery(
+                state=state,
+                runtime_state=runtime_state,
+                reasons=[
+                    "ADMISSION: task-scoped decision requires "
+                    "non-empty target_task_ids."
+                ],
             )
 
         # ------------------------------------------------------
@@ -989,10 +1241,20 @@ def _apply_concurrent_critic_decision(
 
         for task_id in target_task_ids:
 
-            task = TaskPlanManager.get_task(
+            task = TaskPlanManager.find_task(
                 plan=task_plan,
                 task_id=task_id,
             )
+
+            if task is None:
+                return _inadmissible_decision_recovery(
+                    state=state,
+                    runtime_state=runtime_state,
+                    reasons=[
+                        "ADMISSION: unknown target_task_id "
+                        f"'{task_id}' is not in the TaskPlan."
+                    ],
+                )
 
             target_tasks.append(
                 task,
@@ -1022,12 +1284,12 @@ def _apply_concurrent_critic_decision(
 
                 else:
 
-                    raise ValueError(
-                        "Concurrent RETRY_TASK decision "
-                        f"targeted task '{task.task_id}', but its "
-                        f"current status is '{task.status}'. "
-                        "Only FAILED or COMPLETED tasks may be retried."
-                    )
+                        raise ValueError(
+                            "Concurrent RETRY_TASK decision "
+                            f"targeted task '{task.task_id}', but its "
+                            f"current status is '{task.status}'. "
+                            "Only FAILED or COMPLETED tasks may be retried."
+                        )
 
             # --------------------------------------------------
             # The previous PlanExecutionOutcome describes the
@@ -1069,13 +1331,20 @@ def _apply_concurrent_critic_decision(
             for task in target_tasks:
 
                 if task.status != TaskItemStatus.COMPLETED:
-                    raise ValueError(
-                        "Concurrent TASK_COMPLETED decision "
-                        f"targeted task '{task.task_id}', but its "
-                        f"current status is '{task.status}'. "
-                        "The task must already be COMPLETED before "
-                        "the Critic can confirm completion."
+                    return _inadmissible_decision_recovery(
+                        state=state,
+                        runtime_state=runtime_state,
+                        reasons=[
+                            "ADMISSION: TASK_COMPLETED targeted "
+                            f"task '{task.task_id}' but status is "
+                            f"'{task.status}' (must be COMPLETED)."
+                        ],
                     )
+
+                TaskPlanManager.confirm_task(
+                    plan=task_plan,
+                    task_id=task.task_id,
+                )
 
             state["plan_execution_outcome"] = None
             state["execution_workflow"] = None
@@ -1128,9 +1397,13 @@ def _apply_concurrent_critic_decision(
     if scope == "plan":
 
         if target_task_ids:
-            raise ValueError(
-                f"Concurrent Critic event '{event.value}' "
-                "must not contain target_task_ids."
+            return _inadmissible_decision_recovery(
+                state=state,
+                runtime_state=runtime_state,
+                reasons=[
+                    "ADMISSION: plan-scoped decision must not "
+                    "contain target_task_ids."
+                ],
             )
 
         if event == RuntimeEvent.CONTINUE_TASK:

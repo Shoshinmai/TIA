@@ -167,6 +167,25 @@ class TaskPlanManager:
         task.status = TaskItemStatus.IN_PROGRESS
 
     @staticmethod
+    def find_task(
+        *,
+        plan: TaskPlan,
+        task_id: str,
+    ) -> TaskItem | None:
+        """
+        Return the task with the given ID, or None.
+
+        Used for admission checks against model-supplied IDs,
+        where an unknown ID must not raise.
+        """
+
+        for task in plan.tasks:
+            if task.task_id == task_id:
+                return task
+
+        return None
+
+    @staticmethod
     def get_task(
         *,
         plan: TaskPlan,
@@ -216,6 +235,8 @@ class TaskPlanManager:
             )
 
         task.status = TaskItemStatus.READY
+        task.confirmed = False
+        task.evidence.clear()
 
     @staticmethod
     def retry_failed_task(
@@ -250,6 +271,8 @@ class TaskPlanManager:
             )
 
         task.status = TaskItemStatus.READY
+        task.confirmed = False
+        task.evidence.clear()
         task.blockers.clear()
 
     @staticmethod
@@ -284,6 +307,51 @@ class TaskPlanManager:
             )
 
         task.status = TaskItemStatus.READY
+        task.confirmed = False
+        task.evidence.clear()
+
+    @staticmethod
+    def confirm_task(
+        *,
+        plan: TaskPlan,
+        task_id: str,
+    ) -> None:
+        """
+        Record Critic confirmation that a completed task's success
+        criteria are satisfied.
+
+        Only the Critic's TASK_COMPLETED decision may confirm a task.
+        Execution completing workflow steps is never sufficient.
+        """
+
+        task = TaskPlanManager._find_task(
+            plan=plan,
+            task_id=task_id,
+        )
+
+        if task.status != TaskItemStatus.COMPLETED:
+            raise ValueError(
+                f"Task '{task_id}' cannot be confirmed because its "
+                f"current status is '{task.status}'. "
+                "Only COMPLETED tasks may be confirmed."
+            )
+
+        task.confirmed = True
+
+    @staticmethod
+    def activate_plan(
+        *,
+        plan: TaskPlan,
+    ) -> None:
+        """
+        Mark a plan that still contains unfinished tasks as ACTIVE.
+
+        Used after every successful planning cycle so a previously
+        completed plan status cannot leak over newly planned work.
+        """
+
+        if TaskPlanManager.has_remaining_tasks(plan=plan):
+            plan.status = TaskPlanStatus.ACTIVE
 
     @staticmethod
     def complete_task(
@@ -349,6 +417,7 @@ class TaskPlanManager:
         )
 
         task.status = TaskItemStatus.FAILED
+        task.confirmed = False
 
         if reason not in task.blockers:
             task.blockers.append(reason)
@@ -501,9 +570,19 @@ class TaskPlanManager:
             task for task in plan.tasks if task.status == TaskItemStatus.COMPLETED
         ]
 
+        # Only keep unfinished tasks (IN_PROGRESS, FAILED, BLOCKED, CANCELLED,
+        # PENDING, READY). PLAN_UPDATE is additive and must not discard
+        # unfinished work (I6). We preserve the authoritative set of unfinished
+        # tasks exactly as they are in the current plan.
+
+        unfinished_tasks = [
+            task
+            for task in plan.tasks
+            if task.status != TaskItemStatus.COMPLETED
+        ]
+
         # --------------------------------------------------------------
-        # Planner output represents proposed future work.
-        #
+        # Planner output represents proposed additional future work.
         # The Planner must never be allowed to directly establish
         # IN_PROGRESS state.
         # --------------------------------------------------------------
@@ -522,10 +601,11 @@ class TaskPlanManager:
             replacement_tasks.append(task)
 
         # --------------------------------------------------------------
-        # Replace the unfinished portion.
+        # Additive PLAN_UPDATE: keep all unfinished tasks, append only new.
+        # (I6: never discards unfinished)
         # --------------------------------------------------------------
 
-        plan.tasks = completed_tasks + replacement_tasks
+        plan.tasks = completed_tasks + unfinished_tasks + replacement_tasks
 
         # --------------------------------------------------------------
         # Resolve which replacement tasks are immediately executable.

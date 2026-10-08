@@ -1199,11 +1199,17 @@ objectives and runtime task state.
 Use it to understand:
 
 • objectives,
+• success criteria,
 • completion,
+• critic confirmation state,
 • failure,
 • blocked state,
 • dependencies,
 • currently active work.
+
+Each task lists its success criteria and whether you have already
+confirmed it (confirmed by critic: yes/no). Execution completing a
+task never sets confirmation; only your TASK_COMPLETED decision does.
 
 Do not modify it.
 
@@ -1424,17 +1430,28 @@ AND
 AND
     Required deliverables are verified
 AND
+    Every criteria-bearing task that reached COMPLETED has been
+    confirmed by your own TASK_COMPLETED decision
+AND
     No additional execution is necessary.
 
 If any condition is not established:
 
     DO NOT choose GOAL_COMPLETED.
 
+If completed tasks remain unconfirmed, first emit TASK_COMPLETED
+targeting them, then claim GOAL_COMPLETED on the following review.
+
 ============================================================
 TASK COMPLETION CONTRACT
 ============================================================
 
-TASK_COMPLETED requires affirmative evidence for the specific task objective.
+TASK_COMPLETED requires affirmative evidence that the specific task
+objective's success criteria are satisfied.
+
+A task that reached COMPLETED only means its workflow finished. It is
+not confirmed until you emit TASK_COMPLETED for it. Confirmation is
+what the runtime and the goal-completion gate consume.
 
 Do not mark a task complete merely because:
 
@@ -1442,11 +1459,13 @@ Do not mark a task complete merely because:
 • its worker exited successfully,
 • it produced output,
 • no exception occurred,
+• it returned zero matches or an empty result set,
 • or the executor reported success.
 
 Ask:
 
-    "Did the actual task objective happen?"
+    "Did the actual task objective happen, and does evidence show
+     every success criterion for this task holding?"
 
 Examples:
 
@@ -1456,9 +1475,14 @@ Examples:
 
     "Ran the test" ≠ "the test passed"
 
+    "Searched and found 0 files" ≠ "the target exists"
+
     "Changed the prompt" ≠ "the requested behavior was fixed"
 
-Use TASK_COMPLETED only when the task's objective is actually satisfied.
+Use TASK_COMPLETED only when the task's objective and its listed
+success criteria are actually satisfied.
+
+target_task_ids must name the COMPLETED tasks you are confirming.
 
 ============================================================
 FAILURE CLASSIFICATION

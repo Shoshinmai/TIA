@@ -196,7 +196,7 @@ def test_blocked_and_cancelled_tasks_also_block_completion():
                 task_id="c1",
                 objective="Verify the deployment",
                 status=TaskItemStatus.CANCELLED,
-            ),
+            )
         ],
     )
 
@@ -213,3 +213,83 @@ def test_blocked_and_cancelled_tasks_also_block_completion():
     assert verdict.accepted is False
     assert any("b1 (blocked)" in reason for reason in verdict.reasons)
     assert any("c1 (cancelled)" in reason for reason in verdict.reasons)
+
+
+def test_completion_claim_rejected_while_criteria_task_is_unconfirmed():
+    plan = build_plan(
+        tasks=[
+            TaskItem(
+                task_id="a1",
+                objective="Document the runtime routing",
+                status=TaskItemStatus.COMPLETED,
+                success_criteria=[
+                    "The routing table is reproduced with file references"
+                ],
+            )
+        ],
+        status=TaskPlanStatus.COMPLETED,
+    )
+
+    outcome = build_outcome(completed=["a1"])
+
+    verdict = verify_goal_completion_claim(
+        task_plan=plan,
+        outcome=outcome,
+    )
+
+    assert verdict.accepted is False
+    assert any(
+        "never been confirmed" in reason
+        and "TASK_COMPLETED" in reason
+        for reason in verdict.reasons
+    )
+
+
+def test_completion_claim_accepted_when_criteria_task_is_confirmed():
+    plan = build_plan(
+        tasks=[
+            TaskItem(
+                task_id="a1",
+                objective="Document the runtime routing",
+                status=TaskItemStatus.COMPLETED,
+                success_criteria=[
+                    "The routing table is reproduced with file references"
+                ],
+                confirmed=True,
+            )
+        ],
+        status=TaskPlanStatus.COMPLETED,
+    )
+
+    outcome = build_outcome(completed=["a1"])
+
+    verdict = verify_goal_completion_claim(
+        task_plan=plan,
+        outcome=outcome,
+    )
+
+    assert verdict.accepted is True
+    assert verdict.reasons == []
+
+
+def test_unconfirmed_check_ignores_completed_tasks_without_criteria():
+    plan = build_plan(
+        tasks=[
+            TaskItem(
+                task_id="a1",
+                objective="Read the project README",
+                status=TaskItemStatus.COMPLETED,
+            )
+        ],
+        status=TaskPlanStatus.COMPLETED,
+    )
+
+    outcome = build_outcome(completed=["a1"])
+
+    verdict = verify_goal_completion_claim(
+        task_plan=plan,
+        outcome=outcome,
+    )
+
+    assert verdict.accepted is True
+    assert verdict.reasons == []

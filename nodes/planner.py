@@ -30,8 +30,8 @@ async def terminal_planner_node(state: TerminalState):
     # )
     plan = await call_nvidia(
         prompt,
-        # "nvidia/nemotron-3-ultra-550b-a55b",
-        "nvidia/nemotron-3.5-lightning-30b-a3b",
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        # "nvidia/nemotron-3.5-lightning-30b-a3b",
         # "moonshotai/kimi-k3",
         # "nvidia/nemotron-3-super-120b-a12b",
         subagent=True,

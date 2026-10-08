@@ -121,3 +121,5 @@ class TerminalState(TypedDict):
     ]
 
     planner_output: Optional[PlanningOutput]
+
+    workspace: str | None = None

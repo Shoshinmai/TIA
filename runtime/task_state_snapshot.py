@@ -60,8 +60,10 @@ def build_task_execution_snapshot(
 
         "goal": state["goal"],
 
-        "active_memory": deepcopy(
-            state["active_memory"]
+        "active_memory": ActiveTaskMemory(
+            completed_tasks=[],
+            execution_history=[],
+            accumulated_knowledge="",
         ),
 
         "execution_memory": ExecutionMemory(),

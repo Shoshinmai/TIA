@@ -158,6 +158,8 @@ async def concurrent_execution_node(
 
     updated_plan = coordinated_execution.plan
 
+    wave_executed_tasks = len(ready_tasks)
+
     # ==========================================================
     # Build deterministic post-wave execution snapshot
     # ==========================================================
@@ -272,6 +274,10 @@ async def concurrent_execution_node(
     # ==========================================================
 
     if TaskPlanManager.is_plan_complete(
+        plan=updated_plan,
+    ):
+        transition_event = RuntimeEvent.PLAN_EXHAUSTED
+    elif wave_executed_tasks == 0 and not TaskPlanManager.is_plan_complete(
         plan=updated_plan,
     ):
         transition_event = RuntimeEvent.PLAN_EXHAUSTED

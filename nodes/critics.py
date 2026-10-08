@@ -18,7 +18,43 @@ def build_goal_completion_correction(
     The Critic owns the semantic decision. It can only reach that
     decision correctly if it knows which authoritative facts
     contradicted its previous claim.
+
+    Decision-admission refusals (a decision that could not be
+    applied to authoritative runtime state at all) use a distinct
+    correction block so the Critic re-addresses the contract
+    rather than the completion facts.
     """
+
+    if any(
+        reason.startswith("ADMISSION")
+        for reason in rejection
+    ):
+        reasons = "\n".join(
+            f"- {reason}"
+            for reason in rejection
+        )
+
+        return (
+            "\n\n"
+            + "=" * 57
+            + "\nDECISION ADMISSION CORRECTION\n"
+            + "=" * 57
+            + "\n\n"
+            "A previous decision could not be applied to "
+            "authoritative runtime state.\n\n"
+            "Admission failures:\n"
+            + reasons
+            + "\n\n"
+            "Re-read the TASK PLAN SUMMARY. Every target_task_id "
+            "must be an existing task ID, TASK_COMPLETED and "
+            "RETRY_TASK targets must have a status the decision "
+            "type accepts, and target_task_ids must be non-empty "
+            "for task-scoped decisions and empty for plan- and "
+            "goal-scoped decisions.\n\n"
+            "Emit a corrected decision that satisfies both the "
+            "output contract and authoritative state.\n\n"
+            "Do not repeat a decision that failed admission."
+        )
 
     reasons = "\n".join(
         f"- {reason}"
@@ -39,6 +75,9 @@ def build_goal_completion_correction(
         "If these unresolved facts do not affect the user's goal, "
         "state that explicitly and justify it with concrete "
         "evidence for every unresolved objective.\n\n"
+        "If completed tasks with success criteria are unconfirmed, "
+        "emit TASK_COMPLETED targeting each of them with "
+        "affirmative evidence for their criteria.\n\n"
         "Otherwise choose RETRY_TASK, PLAN_UPDATE_REQUIRED, or "
         "REPLAN_REQUIRED.\n\n"
         "Do not repeat GOAL_COMPLETED without addressing every "
@@ -125,13 +164,43 @@ async def terminal_critic_node(state):
         state_model=CriticOutput,
     )
 
-    critic_output = validate_critic_output(
-        critic_output,
-    )
+    # ------------------------------------------------------
+    # Structural validation and event mapping are admissions of
+    # model output. A structurally invalid decision must not
+    # crash the run: it becomes an ADMISSION refusal the Critic
+    # gets one bounded chance to correct.
+    # ------------------------------------------------------
 
-    runtime_event = build_critic_runtime_event(
-        critic_output,
-    )
+    try:
+        critic_output = validate_critic_output(
+            critic_output,
+        )
+
+        runtime_event = build_critic_runtime_event(
+            critic_output,
+        )
+    except ValueError as exc:
+        print(
+            "\n========== CRITIC DECISION REFUSED (ADMISSION) =========="
+        )
+        print(
+            str(exc)
+        )
+
+        rejection_reasons = [
+            "ADMISSION: The decision failed structural "
+            f"validation: {exc} "
+            "Produce a corrected decision that satisfies the "
+            "output contract: non-empty rationale and "
+            "evidence, target_task_ids matching the decision "
+            "type and scope, and a scope/decision pair the "
+            "validator accepts."
+        ]
+
+        return {
+            "critic_runtime_event": None,
+            "critic_rejection": rejection_reasons,
+        }
 
     print("\n========== CRITIC ==========")
     print(

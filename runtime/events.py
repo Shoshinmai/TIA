@@ -60,6 +60,8 @@ class RuntimeEvent(StrEnum):
     REPLAN_REQUIRED = "replan_required"
     GOAL_COMPLETED = "goal_completed"
 
+    BUDGET_EXHAUSTED = "budget_exhausted"
+
 
 _PLANNING_EVENTS: Final = {
     RuntimeEvent.PLAN_CREATED,

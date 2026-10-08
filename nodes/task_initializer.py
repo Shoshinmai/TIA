@@ -78,4 +78,5 @@ def task_initializer_node(
         "observation_summary": "",
         "observation_conclusion": "",
         "planner_output": None,
+        "workspace": str(state.get("workspace")) if state.get("workspace") is not None else str(state.get("goal")) or None,
     }

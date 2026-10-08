@@ -227,3 +227,110 @@ def test_rejection_survives_while_the_critic_keeps_claiming_completion(
     assert "GOAL COMPLETION CORRECTION" in prompt
     assert result["critic_rejection"] == REJECTION_REASONS
     assert result["critic_runtime_event"].event == RuntimeEvent.GOAL_COMPLETED
+
+
+def task_completed_runtime_event(target_task_ids: list[str]):
+    return build_critic_runtime_event(
+        CriticOutput(
+            decision=CriticDecision.TASK_COMPLETED,
+            rationale=(
+                "Execution evidence satisfies the task criteria."
+            ),
+            evidence=[
+                CriticEvidence(
+                    source="execution",
+                    observation=(
+                        "The completed workflow output matches "
+                        "every success criterion."
+                    ),
+                )
+            ],
+            target_task_ids=target_task_ids,
+        )
+    )
+
+
+def build_special_case_state(
+    target_task_ids: list[str],
+    *,
+    second_task_confirmed: bool = False,
+) -> dict:
+    """A plan whose tasks are all completed, with no IN_PROGRESS
+    task and no execution boundary: the PLAN_EXHAUSTED review."""
+
+    tasks = [
+        TaskItem(
+            task_id="a1",
+            objective="Identify the core goal",
+            status=TaskItemStatus.COMPLETED,
+            success_criteria=["The core goal is named in the summary"],
+        ),
+        TaskItem(
+            task_id="a2",
+            objective="Persist the discovered knowledge",
+            status=TaskItemStatus.COMPLETED,
+            success_criteria=["The knowledge is recorded in memory"],
+            confirmed=second_task_confirmed,
+        ),
+    ]
+
+    return {
+        "runtime_state": RuntimeState(
+            mode=RuntimeMode.REVIEWING,
+            metadata={
+                GOAL_COMPLETION_REJECTION_COUNT_KEY: 0,
+            },
+        ),
+        "task_plan": TaskPlan(
+            plan_id="plan-1",
+            goal="explain the repository layout",
+            status=TaskPlanStatus.ACTIVE,
+            tasks=tasks,
+        ),
+        "plan_execution_outcome": None,
+        "execution_workflow": None,
+        "critic_runtime_event": task_completed_runtime_event(
+            target_task_ids,
+        ),
+    }
+
+
+def test_task_completed_with_an_unconfirmed_leftover_stays_in_review():
+    state = build_special_case_state(["a1"])
+
+    result = runtime_critic_result_node(state)
+
+    runtime_state = result["runtime_state"]
+
+    assert runtime_state.mode == RuntimeMode.REVIEWING
+    assert result["task_plan"].status == TaskPlanStatus.COMPLETED
+    assert result["task_plan"].tasks[0].confirmed is True
+    assert result["task_plan"].tasks[1].confirmed is False
+    assert any(
+        "a2" in reason and "never been confirmed" in reason
+        for reason in result["critic_rejection"]
+    )
+    assert (
+        runtime_state.metadata[GOAL_COMPLETION_REJECTION_COUNT_KEY] == 1
+    )
+    assert result["plan_execution_outcome"] is None
+
+
+def test_goal_completion_is_admitted_once_every_target_is_confirmed():
+    state = build_special_case_state(
+        ["a1", "a2"],
+        second_task_confirmed=False,
+    )
+
+    result = runtime_critic_result_node(state)
+
+    runtime_state = result["runtime_state"]
+
+    assert runtime_state.mode == RuntimeMode.FINISHED
+    assert result["task_plan"].status == TaskPlanStatus.COMPLETED
+    assert all(
+        task.confirmed
+        for task in result["task_plan"].tasks
+    )
+    assert result["critic_rejection"] is None
+    assert GOAL_COMPLETION_CONFLICT_KEY not in runtime_state.metadata

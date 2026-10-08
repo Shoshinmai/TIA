@@ -27,6 +27,9 @@ from task_plan.models import (
 )
 
 
+MAX_TASK_EVIDENCE_ENTRIES = 12
+
+
 class TaskResultReconciler:
     """
     Reconcile terminal task execution results into authoritative
@@ -260,6 +263,23 @@ class TaskResultReconciler:
             results=results,
             state=state,
         )
+
+        # ======================================================
+        # 2C. Attribute execution evidence to tasks
+        # ======================================================
+        #
+        # Each result's evidence is recorded on the authoritative
+        # TaskItem so the Critic and Planner evaluate success
+        # criteria against evidence attributed to the task that
+        # produced it, not against pooled execution output.
+        # ======================================================
+
+        for result in results:
+
+            TaskResultReconciler._attribute_task_evidence(
+                plan=plan,
+                result=result,
+            )
 
         # ======================================================
         # 3. Recompute readiness AFTER the entire wave
@@ -505,6 +525,86 @@ class TaskResultReconciler:
             f"unresolved="
             f"{len(active_memory.unresolved_needs)}"
         )
+
+    @staticmethod
+    def _attribute_task_evidence(
+        *,
+        plan: TaskPlan,
+        result: TaskExecutionResult,
+    ) -> None:
+        """
+        Record bounded, task-attributed evidence on the TaskItem.
+
+        Sources, in deterministic order:
+
+            - memory-update proposal evidence,
+            - execution messages,
+            - persisted artifact summaries,
+            - worker error information.
+
+        The TaskPlan summary renders these entries directly, so a
+        reviewer can adjudicate a task's success criteria against
+        evidence that names the task that produced it.
+
+        The list is bounded: reconciliation keeps only the most
+        recent entries.
+        """
+
+        task = TaskPlanManager.get_task(
+            plan=plan,
+            task_id=result.task_id,
+        )
+
+        entries: list[str] = []
+
+        for processed in result.processing_results:
+
+            proposal = processed.memory_update
+
+            entries.extend(
+                str(line).strip()
+                for line in proposal.evidence
+                if str(line).strip()
+            )
+
+            normalized = processed.normalized_result
+
+            execution = normalized.execution
+
+            if (
+                execution.message
+                and execution.message.strip()
+            ):
+                entries.append(
+                    f"{normalized.context.tool_name}: "
+                    f"{execution.message.strip()}"
+                )
+
+            decision = processed.artifact_decision
+
+            if (
+                decision.action == ArtifactAction.STORE
+                and decision.artifact is not None
+            ):
+                entries.append(
+                    "artifact: "
+                    f"{decision.artifact.summary.strip()}"
+                )
+
+        if result.error and result.error.strip():
+
+            entries.append(
+                f"error: {result.error.strip()}"
+            )
+
+        for entry in entries:
+
+            if entry not in task.evidence:
+                task.evidence.append(entry)
+
+        if len(task.evidence) > MAX_TASK_EVIDENCE_ENTRIES:
+
+            del task.evidence[:-MAX_TASK_EVIDENCE_ENTRIES]
 
     @staticmethod
     def _reconcile_artifacts(

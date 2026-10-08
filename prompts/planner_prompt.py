@@ -1362,6 +1362,42 @@ Objectives must not prescribe:
 - scheduler behavior,
 - concurrency limits.
 
+# SUCCESS CRITERIA
+
+Every task must include one to three success criteria.
+
+A success criterion is an observable condition that can be checked
+against execution evidence: artifacts, Active Task Memory, terminal
+output, or verified filesystem state.
+
+The Runtime stores criteria mechanically. The Critic adjudicates them
+against evidence and must confirm every criterion-bearing task before
+the overall goal can be considered complete.
+
+A criterion is:
+
+- about an outcome, not an execution step,
+- checkable without asking the planner again,
+- specific enough that its satisfaction can be argued from evidence,
+- scoped to that task's objective only.
+
+A criterion is not:
+
+- "the task ran" or "the command succeeded",
+- an executor instruction,
+- a vague property such as "works correctly" with no observable anchor.
+
+Write criteria so a reviewer holding only execution evidence can decide
+whether each one holds.
+
+Bad:  "Investigation completed successfully"
+Good: "The failing module is identified by name and its failure mode is
+       described with a concrete reference from the code"
+
+Bad:  "Tests pass"
+Good: "The targeted test command exits 0 and its output shows the
+       previously failing case now passing"
+
 # TASK DEPENDENCIES
 
 A dependency represents logical necessity.
@@ -1460,13 +1496,42 @@ The object must contain exactly:
         {{
             "planner_task_id": "task_1",
             "objective": "A concrete strategic objective.",
-            "dependencies": []
+            "dependencies": [],
+            "success_criteria": [
+                "An observable, evidence-checkable condition."
+            ]
         }}
     ]
 }}
 
+Every task must carry at least one success criterion.
+
 The strategy should communicate the current direction and the primary decision,
 blocker, or reason the selected objectives are the correct planning horizon.
+
+# PLAN UPDATE MODE
+
+When RuntimeEvent is PLAN_UPDATE_REQUIRED, you must perform an
+additive update to the CURRENT TASK PLAN (not a full rewrite).
+
+Constraints for PLAN_UPDATE_REQUIRED:
+- Keep every unfinished task exactly as-is. Do not reorder,
+  rephrase, consolidate, renumber, merge, or split unfinished tasks.
+- Preserve each unfinished task's id, objective, dependencies,
+  success_criteria, and every confirmed/evidence state you can see.
+- Only add new tasks to the end of the plan. Do not delete any task.
+- Do not modify any existing task unless the runtime explicitly marks
+  it for replacement. No other edits are allowed.
+- New tasks must directly address the unresolved issues described in
+  the RUNTIME DECISION CONTEXT and EXECUTION HISTORY. They must not
+  introduce unrelated exploratory work.
+- The strategy must state that this is an additive update and explain
+  why new tasks are required.
+- Do not discard or relocate completed/failed tasks; they remain
+  authoritative parts of the plan. Only the unfinished set is frozen.
+
+When RuntimeEvent is REPLAN_REQUIRED, you must produce a new plan.
+When RuntimeEvent is PLAN_CREATED, you create an initial plan.
 
 Return no reasoning, explanation, markdown, commentary, or additional fields.
 """
