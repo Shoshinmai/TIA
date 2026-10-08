@@ -44,7 +44,16 @@ def _build_active_memory(state: dict[str, Any]) -> str:
         active_memory=state["active_memory"],
     )
 
-    return memory if memory else "No task knowledge available."
+    if memory:
+        return memory
+
+    return (
+        "No task knowledge available.\n\n"
+        "No prior execution knowledge exists for this task. Do not "
+        "create objectives to populate, classify or update memory. "
+        "Derive the first objectives from the goal and from the "
+        "artifacts it actually involves."
+    )
 
 
 def _build_task_plan(state: dict[str, Any]) -> str:

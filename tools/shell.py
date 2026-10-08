@@ -1,12 +1,12 @@
 from langchain_core.tools import tool
 
-from .command_runner import run_command
+from tools.command_runner import run_command
 
 
 @tool
-def run_terminal(command: str) -> dict:
+async def run_terminal(command: str) -> dict:
     """
-    Execute exactly one Windows terminal command.
+    Execute exactly one terminal command asynchronously.
 
     This is the fallback terminal capability of the Terminal Agent.
 
@@ -16,12 +16,20 @@ def run_terminal(command: str) -> dict:
     The command may be read-only or modifying depending on the
     current objective.
 
+    Shell syntax:
+    - Commands run in bash (POSIX syntax): single quotes, pipes,
+      redirection, && chaining and globbing all work.
+    - Do not use cmd.exe builtins such as dir, cls, type or copy.
+    - Prefer bash builtins and standard POSIX utilities.
+
     Command rules:
     - Exactly one command.
     - Never chain commands.
     - Do not use && or ||.
     - Do not use multiple independent commands.
     - The command must directly contribute to the current objective.
+    - Output must be plain text or JSON. Do not attempt to modify
+      agent memory, plans or runtime state through this capability.
 
     Returns:
         success
@@ -30,11 +38,8 @@ def run_terminal(command: str) -> dict:
         return_code
     """
 
-    result = run_command(command)
+    result = await run_command(command)
 
-    # command_runner currently exposes `returncode`.
-    # Keep the adapter tolerant of the normalized `return_code`
-    # spelling as well.
     return_code = result.get(
         "return_code",
         result.get("returncode", -1),
@@ -46,10 +51,3 @@ def run_terminal(command: str) -> dict:
         "error": result.get("stderr", ""),
         "return_code": return_code,
     }
-
-
-# print(
-#     run_terminal.invoke(
-#         {"command": "where python"}
-#     )
-# )

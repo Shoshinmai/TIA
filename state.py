@@ -4,6 +4,7 @@ from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 
 from critics.integration import CriticRuntimeEvent
+from critics.models import CriticOutput
 from models import (
     ActiveTaskMemory,
     ArtifactReference,
@@ -15,8 +16,10 @@ from models import (
     TaskContext,
     ThreadMemory,
 )
+from output.models import AgentOutput
 from result_processing.models import RuntimeProcessingResult
 from runtime.models import RuntimeState
+from runtime.plan_execution_outcome import PlanExecutionOutcome
 from task_executor.models import ExecutionWorkflow
 from task_plan.models import TaskPlan
 
@@ -37,17 +40,27 @@ class TerminalState(TypedDict):
 
     thread_memory: ThreadMemory
 
-    persistent_memory: PersistentMemory
+    persistent_memory: PersistentMemory 
 
     ephemeral_execution_state: EphemeralExecutionState
     
     runtime_state: RuntimeState
+
+    concurrent_execution: bool
     
     task_plan: TaskPlan | None
+    
+    plan_execution_outcome: PlanExecutionOutcome | None
     
     execution_workflow: ExecutionWorkflow | None
     
     critic_runtime_event: CriticRuntimeEvent | None
+    
+    critic_output: CriticOutput | None
+    
+    critic_rejection: list[str] | None
+    
+    agent_output: AgentOutput | None
 
     # ==========================================================
     # GRAPH / TOOL PROTOCOL

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -40,6 +40,20 @@ class RuntimeDecisionContext(BaseModel):
         min_length=1,
     )
 
+    decision_scope: str = Field(
+        min_length=1,
+        description=(
+            "Scope at which the runtime decision must be applied."
+        ),
+    )
+
+    target_task_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Task IDs targeted by the runtime decision."
+        ),
+    )
+
 
 class RuntimeState(BaseModel):
     """
@@ -55,7 +69,7 @@ class RuntimeState(BaseModel):
     iteration: int = 0
 
     started_at: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=lambda: datetime.now(timezone.utc),
     )
     
     decision_context: RuntimeDecisionContext | None = None

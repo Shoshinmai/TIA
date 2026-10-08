@@ -70,6 +70,10 @@ _TRANSITIONS: dict[Transition, RuntimeMode] = {
         RuntimeMode.EXECUTING,
         RuntimeEvent.EXECUTION_FAILED,
     ): RuntimeMode.REVIEWING,
+    Transition(
+        RuntimeMode.EXECUTING,
+        RuntimeEvent.PLAN_EXHAUSTED,
+    ): RuntimeMode.REVIEWING,
     # ================================================================
     # Review
     # ================================================================

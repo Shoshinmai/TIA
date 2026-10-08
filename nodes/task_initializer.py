@@ -53,6 +53,7 @@ def task_initializer_node(
         "execution_workflow": None,
         "critic_runtime_event": None,
         "runtime_state": RuntimeState(),
+        "concurrent_execution": True,
         "persistent_memory": PersistentMemory(),
         "ephemeral_execution_state": EphemeralExecutionState(),
         # Transitional legacy reset

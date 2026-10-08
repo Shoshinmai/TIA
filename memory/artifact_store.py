@@ -1,6 +1,6 @@
 import uuid
 
-from .artifact import Artifact
+from memory.artifact import Artifact
 
 
 class ArtifactStore:

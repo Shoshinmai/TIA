@@ -9,6 +9,7 @@ from result_processing.models import (
 )
 
 from pathlib import Path
+from utils.location_resolver import resolve_location
 
 
 def _normalize_resource_path(
@@ -16,27 +17,119 @@ def _normalize_resource_path(
     project_root: str | None,
 ) -> str:
     """
-    Normalize resource paths stored inside Active Memory.
+    Normalize an already-resolved resource path.
 
+    Rules:
     - Relative paths are preserved.
-    - Absolute paths inside the project become project-relative.
-    - External paths remain absolute.
+    - Absolute paths inside the process project root are converted
+      to project-relative paths.
+    - External absolute paths remain absolute.
     """
 
     candidate = Path(path)
 
-    # Already relative → keep as-is
     if not candidate.is_absolute():
         return path
 
-    if not project_root:
-        return path
-
     try:
-        return str(candidate.resolve().relative_to(Path(project_root).resolve()))
+        process_root = Path.cwd().resolve()
+
+        return str(
+            candidate.resolve().relative_to(
+                process_root,
+            )
+        )
 
     except ValueError:
-        return path
+        pass
+
+    if project_root:
+        try:
+            return str(
+                candidate.resolve().relative_to(
+                    Path(project_root).resolve(),
+                )
+            )
+
+        except ValueError:
+            pass
+
+    return str(candidate)
+
+
+def _normalize_listed_resource_path(
+    *,
+    entry: str,
+    resolved_directory: str,
+) -> str:
+    """
+    Convert a list_directory result into a stable project-aware path.
+
+    list_directory returns entries relative to the directory being
+    inspected.
+
+    Example:
+
+        resolved_directory:
+            D:\\AI_dev\\CASO\\agents\\terminal
+
+        entry:
+            runtime\\concurrent_execution_node.py
+
+        result:
+            agents\\terminal\\runtime\\concurrent_execution_node.py
+    """
+
+    entry_path = Path(entry)
+
+    # ----------------------------------------------------------
+    # Already absolute.
+    # ----------------------------------------------------------
+
+    if entry_path.is_absolute():
+
+        return _normalize_resource_path(
+            path=str(entry_path),
+            project_root=None,
+        )
+
+    # ----------------------------------------------------------
+    # list_directory entries are relative to the inspected
+    # directory, NOT the project root.
+    # ----------------------------------------------------------
+
+    resolved_directory_path = Path(
+        resolved_directory,
+    ).resolve()
+
+    combined = (
+        resolved_directory_path
+        / entry_path
+    ).resolve()
+
+    # ----------------------------------------------------------
+    # Prefer project-relative representation when the resource
+    # is inside the current project.
+    # ----------------------------------------------------------
+
+    try:
+
+        return str(
+            combined.relative_to(
+                Path.cwd().resolve(),
+            )
+        )
+
+    except ValueError:
+        pass
+
+    # ----------------------------------------------------------
+    # External locations remain absolute.
+    # ----------------------------------------------------------
+
+    return str(
+        combined,
+    )
 
 
 def _resource_depth(path: str) -> int:
@@ -115,44 +208,102 @@ def normalize_list_directory(
     attempt: int = 1,
 ) -> NormalizedResult:
     """
-    Normalize any filesystem listing result.
+    Normalize a filesystem directory listing.
 
-    Supports:
-        - list_directory
-        - search_files (later)
-        - glob_files (later)
+    list_directory returns child entries relative to the directory
+    that was inspected. The inspected directory must therefore be
+    retained when converting those entries into durable resources.
     """
-    directories = raw_result.get("directories", [])
-    files = raw_result.get("files", [])
+
+    directories = raw_result.get(
+        "directories",
+        [],
+    )
+
+    files = raw_result.get(
+        "files",
+        [],
+    )
 
     resources: list[Resource] = []
-    project_root = raw_result.get("resolved_path")
+
+    resolved_directory = raw_result.get("resolved_path")
+
+    if not resolved_directory:
+        location = raw_result.get("location")
+        if not location:
+            raise ValueError(
+                "list_directory result is missing resolved_path and location."
+            )
+        try:
+            resolved_directory = str(resolve_location(location))
+        except (OSError, ValueError) as error:
+            raise ValueError(
+                "list_directory result is missing resolved_path and its "
+                f"location could not be resolved: {location!r}."
+            ) from error
+
+    if not resolved_directory:
+        raise ValueError(
+            "list_directory result is missing resolved_path."
+        )
+
+    # ----------------------------------------------------------
+    # Directories
+    # ----------------------------------------------------------
 
     for directory in directories:
+
+        identifier = _normalize_listed_resource_path(
+            entry=directory,
+            resolved_directory=resolved_directory,
+        )
+
         resources.append(
             _build_resource(
-                identifier=directory,
-                project_root=project_root,
+                identifier=identifier,
+                project_root=None,
                 resource_type=ResourceType.DIRECTORY,
             )
         )
 
+    # ----------------------------------------------------------
+    # Files
+    # ----------------------------------------------------------
+
     for file in files:
+
+        identifier = _normalize_listed_resource_path(
+            entry=file,
+            resolved_directory=resolved_directory,
+        )
+
         resources.append(
             _build_resource(
-                identifier=file,
-                project_root=project_root,
+                identifier=identifier,
+                project_root=None,
                 resource_type=ResourceType.FILE,
             )
         )
 
+    total_directories = raw_result.get("total_directories", len(directories))
+    total_files = raw_result.get("total_files", len(files))
+
     facts = [
         Fact(
-            statement=f"Found {raw_result['total_directories']} directories.",
+            statement=(
+                f"Found "
+                f"{total_directories} "
+                "directories."
+            ),
             source=tool_name,
         ),
         Fact(
-            statement=f"Found {raw_result['total_files']} files.",
+            statement=(
+                f"Found "
+                f"{total_files} "
+                "files."
+            ),
             source=tool_name,
         ),
     ]
@@ -160,8 +311,10 @@ def normalize_list_directory(
     artifact = ArtifactCandidate(
         artifact_type="file_listing",
         summary=(
-            f"Filesystem listing containing "
-            f"{raw_result['total_directories']} directories and {raw_result['total_files']} files."
+            "Filesystem listing containing "
+            f"{total_directories} "
+            "directories and "
+            f"{total_files} files."
         ),
         data=raw_result,
     )
@@ -169,7 +322,10 @@ def normalize_list_directory(
     return _build_normalized_result(
         tool_name=tool_name,
         attempt=attempt,
-        success=raw_result.get("success", False),
+        success=raw_result.get(
+            "success",
+            False,
+        ),
         progress_made=bool(resources),
         facts=facts,
         resources=resources,

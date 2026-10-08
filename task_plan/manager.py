@@ -165,7 +165,23 @@ class TaskPlanManager:
             )
 
         task.status = TaskItemStatus.IN_PROGRESS
-        
+
+    @staticmethod
+    def get_task(
+        *,
+        plan: TaskPlan,
+        task_id: str,
+    ) -> TaskItem:
+        """
+        Return a specific task by ID.
+
+        This is a read-only public lookup used by runtime components.
+        """
+        return TaskPlanManager._find_task(
+            plan=plan,
+            task_id=task_id,
+        )
+
     @staticmethod
     def retry_task(
         *,
@@ -197,6 +213,74 @@ class TaskPlanManager:
                 f"Task '{task_id}' cannot be retried because its "
                 f"current status is '{task.status}'. "
                 "Only IN_PROGRESS tasks may be retried."
+            )
+
+        task.status = TaskItemStatus.READY
+
+    @staticmethod
+    def retry_failed_task(
+        *,
+        plan: TaskPlan,
+        task_id: str,
+    ) -> None:
+        """
+        Requeue a FAILED task for another execution attempt.
+
+        This is the concurrent-review recovery path.
+
+        Lifecycle:
+
+            FAILED
+                ↓
+            READY
+                ↓
+            new execution wave
+        """
+
+        task = TaskPlanManager._find_task(
+            plan=plan,
+            task_id=task_id,
+        )
+
+        if task.status != TaskItemStatus.FAILED:
+            raise ValueError(
+                f"Task '{task_id}' cannot be retried because its "
+                f"current status is '{task.status}'. "
+                "Only FAILED tasks may enter concurrent retry."
+            )
+
+        task.status = TaskItemStatus.READY
+        task.blockers.clear()
+
+    @staticmethod
+    def retry_completed_task(
+        *,
+        plan: TaskPlan,
+        task_id: str,
+    ) -> None:
+        """
+        Requeue a completed task when the Critic determines that
+        the latest execution did not actually satisfy the objective.
+
+        Lifecycle:
+
+            COMPLETED
+                ↓
+            READY
+                ↓
+            new execution wave
+        """
+
+        task = TaskPlanManager._find_task(
+            plan=plan,
+            task_id=task_id,
+        )
+
+        if task.status != TaskItemStatus.COMPLETED:
+            raise ValueError(
+                f"Task '{task_id}' cannot be retried because its "
+                f"current status is '{task.status}'. "
+                "Only COMPLETED tasks may enter completed retry."
             )
 
         task.status = TaskItemStatus.READY
@@ -386,7 +470,7 @@ class TaskPlanManager:
         ]
 
         plan.tasks = completed_tasks + list(tasks)
-        
+
     @staticmethod
     def update_remaining_tasks(
         *,
@@ -414,9 +498,7 @@ class TaskPlanManager:
         # --------------------------------------------------------------
 
         completed_tasks = [
-            task
-            for task in plan.tasks
-            if task.status == TaskItemStatus.COMPLETED
+            task for task in plan.tasks if task.status == TaskItemStatus.COMPLETED
         ]
 
         # --------------------------------------------------------------
@@ -432,8 +514,7 @@ class TaskPlanManager:
 
             if task.status == TaskItemStatus.COMPLETED:
                 raise ValueError(
-                    "Planner-generated replacement tasks cannot be "
-                    "marked COMPLETED."
+                    "Planner-generated replacement tasks cannot be " "marked COMPLETED."
                 )
 
             task.status = TaskItemStatus.PENDING
@@ -453,7 +534,7 @@ class TaskPlanManager:
         TaskPlanManager.update_task_readiness(
             plan=plan,
         )
-        
+
     @staticmethod
     def get_in_progress_task(
         *,
@@ -470,7 +551,51 @@ class TaskPlanManager:
                 return task
 
         return None
-    
+
+    @staticmethod
+    def get_in_progress_tasks(
+        *,
+        plan: TaskPlan,
+    ) -> list[TaskItem]:
+        """
+        Return all tasks currently in progress.
+
+        Tasks are returned in planner-defined order.
+        """
+        return [
+            task for task in plan.tasks if task.status == TaskItemStatus.IN_PROGRESS
+        ]
+
+    @staticmethod
+    def start_ready_tasks(
+        *,
+        plan: TaskPlan,
+        limit: int,
+    ) -> list[TaskItem]:
+        """
+        Start up to `limit` READY tasks.
+
+        Tasks are selected in planner-defined order.
+
+        The TaskPlanManager remains the sole owner of TaskItem lifecycle
+        transitions. The scheduler decides how many tasks may be admitted;
+        this manager performs READY -> IN_PROGRESS.
+        """
+
+        if limit < 1:
+            return []
+
+        ready_tasks = TaskPlanManager.get_ready_tasks(
+            plan=plan,
+        )
+
+        selected_tasks = ready_tasks[:limit]
+
+        for task in selected_tasks:
+            task.status = TaskItemStatus.IN_PROGRESS
+
+        return selected_tasks
+
     @staticmethod
     def is_plan_complete(
         *,
@@ -487,11 +612,8 @@ class TaskPlanManager:
         if not plan.tasks:
             return False
 
-        return all(
-            task.status == TaskItemStatus.COMPLETED
-            for task in plan.tasks
-        )
-        
+        return all(task.status == TaskItemStatus.COMPLETED for task in plan.tasks)
+
     @staticmethod
     def has_remaining_tasks(
         *,
@@ -504,11 +626,8 @@ class TaskPlanManager:
         This is a deterministic TaskPlan query.
         """
 
-        return any(
-            task.status != TaskItemStatus.COMPLETED
-            for task in plan.tasks
-        )
-        
+        return any(task.status != TaskItemStatus.COMPLETED for task in plan.tasks)
+
     @staticmethod
     def get_blocked_tasks(
         *,
@@ -528,10 +647,7 @@ class TaskPlanManager:
             TaskItemStatus.CANCELLED,
         }
 
-        status_by_id = {
-            task.task_id: task.status
-            for task in plan.tasks
-        }
+        status_by_id = {task.task_id: task.status for task in plan.tasks}
 
         blocked_tasks: list[TaskItem] = []
 
@@ -544,8 +660,7 @@ class TaskPlanManager:
                 continue
 
             if any(
-                status_by_id.get(dependency)
-                in terminal_blocking_statuses
+                status_by_id.get(dependency) in terminal_blocking_statuses
                 for dependency in task.dependencies
             ):
                 blocked_tasks.append(task)

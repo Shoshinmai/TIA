@@ -1,0 +1,8 @@
+{
+    "dependencies": ["."],
+    "graphs": {
+      "TIA": "./runtime_graph.py:runtime_graph"
+    },
+    "env": "./.env"
+  }
+  

@@ -10,7 +10,7 @@ from result_processing.processor import (
 )
 
 
-def message_adapter_node(state: TerminalState):
+async def message_adapter_node(state: TerminalState):
 
     messages = state["messages"]
 
@@ -31,7 +31,7 @@ def message_adapter_node(state: TerminalState):
     except json.JSONDecodeError:
         raw_result = latest_tool_message.content
 
-    processed_result = process_tool_result(
+    processed_result = await process_tool_result(
         state=state,
         tool_name=latest_tool_message.name,
         raw_result=raw_result,

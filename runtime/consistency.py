@@ -57,20 +57,16 @@ def validate_runtime_consistency(
         if task.status == TaskItemStatus.IN_PROGRESS
     ]
 
-    # ----------------------------------------------------------
-    # Only one objective may be executing.
-    # ----------------------------------------------------------
-
-    if len(in_progress_tasks) > 1:
-        raise RuntimeError(
-            "TaskPlan contains multiple IN_PROGRESS tasks."
-        )
-
-    current_task = (
-        in_progress_tasks[0]
-        if in_progress_tasks
-        else None
+    concurrent_execution = bool(
+        state.get("concurrent_execution", True)
     )
+
+    # Concurrent execution admits a dependency-ready wave, so
+    # multiple task objectives may legitimately be IN_PROGRESS.
+    if not concurrent_execution and len(in_progress_tasks) > 1:
+        raise RuntimeError("TaskPlan contains multiple IN_PROGRESS tasks.")
+
+    current_task = in_progress_tasks[0] if in_progress_tasks else None
 
     # ----------------------------------------------------------
     # EXECUTING requires an active task.
@@ -88,7 +84,9 @@ def validate_runtime_consistency(
     # Workflow requires an active task.
     # ----------------------------------------------------------
 
-    if workflow is not None:
+    if workflow is not None and (
+        not concurrent_execution or len(in_progress_tasks) == 1
+    ):
 
         if current_task is None:
             raise RuntimeError(
