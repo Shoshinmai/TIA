@@ -78,6 +78,37 @@ class RuntimeState(BaseModel):
         default_factory=dict,
     )
 
+    # Budget tracking for convergence
+    max_iterations: int = Field(
+        default=50,
+        ge=1,
+        description="Maximum runtime iterations before budget exhaustion.",
+    )
+
+    consecutive_no_progress: int = Field(
+        default=0,
+        ge=0,
+        description="Consecutive waves with no meaningful progress.",
+    )
+
+    max_no_progress: int = Field(
+        default=3,
+        ge=1,
+        description="Maximum consecutive no-progress waves before budget exhaustion.",
+    )
+
+    # Decision history for detecting repeated decisions
+    decision_history: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="History of admitted decisions for loop detection.",
+    )
+
+    max_decision_history: int = Field(
+        default=20,
+        ge=1,
+        description="Maximum decision history entries to retain.",
+    )
+
 
 class RuntimeSnapshot(BaseModel):
     """

@@ -855,17 +855,20 @@ def runtime_critic_result_node(
                     decision_context.target_task_ids or []
                 ):
 
-                    task = TaskPlanManager.get_task(
+                    task = TaskPlanManager.find_task(
                         plan=task_plan,
                         task_id=task_id,
                     )
 
-                    if task.status != TaskItemStatus.COMPLETED:
-                        raise ValueError(
-                            "TASK_COMPLETED target "
-                            f"'{task_id}' has status "
-                            f"'{task.status}'. Only COMPLETED "
-                            "tasks may be confirmed."
+                    if task is None or task.status != TaskItemStatus.COMPLETED:
+                        return _inadmissible_decision_recovery(
+                            state=state,
+                            runtime_state=runtime_state,
+                            reasons=[
+                                "ADMISSION: TASK_COMPLETED target "
+                                f"'{task_id}' not found or not COMPLETED. "
+                                "Only COMPLETED tasks may be confirmed."
+                            ],
                         )
 
                     TaskPlanManager.confirm_task(
@@ -1284,11 +1287,15 @@ def _apply_concurrent_critic_decision(
 
                 else:
 
-                        raise ValueError(
-                            "Concurrent RETRY_TASK decision "
-                            f"targeted task '{task.task_id}', but its "
-                            f"current status is '{task.status}'. "
-                            "Only FAILED or COMPLETED tasks may be retried."
+                        return _inadmissible_decision_recovery(
+                            state=state,
+                            runtime_state=runtime_state,
+                            reasons=[
+                                "ADMISSION: Concurrent RETRY_TASK decision "
+                                f"targeted task '{task.task_id}', but its "
+                                f"current status is '{task.status}'. "
+                                "Only FAILED or COMPLETED tasks may be retried."
+                            ],
                         )
 
             # --------------------------------------------------
@@ -1457,9 +1464,13 @@ def _apply_concurrent_critic_decision(
     if scope == "goal":
 
         if target_task_ids:
-            raise ValueError(
-                f"Concurrent Critic event '{event.value}' "
-                "must not contain target_task_ids."
+            return _inadmissible_decision_recovery(
+                state=state,
+                runtime_state=runtime_state,
+                reasons=[
+                    "ADMISSION: goal-scoped decision must not "
+                    "contain target_task_ids."
+                ],
             )
 
         if event == RuntimeEvent.GOAL_COMPLETED:

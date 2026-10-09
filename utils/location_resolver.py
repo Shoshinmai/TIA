@@ -19,6 +19,33 @@ LOCATION_ALIASES = {
     "current folder": "current directory",
 }
 
+# Module-level workspace root, set at runtime from the resolved state.
+# This allows tools to resolve "workspace" without direct state access.
+_WORKSPACE_ROOT: Path | None = None
+
+
+def set_workspace_root(path: str | Path) -> None:
+    """Set the workspace root for location resolution."""
+    global _WORKSPACE_ROOT
+    _WORKSPACE_ROOT = Path(path).resolve() if path else None
+
+
+def get_workspace_root() -> Path | None:
+    """Get the current workspace root."""
+    return _WORKSPACE_ROOT
+
+
+def is_drive_root(path: Path) -> bool:
+    """
+    Check if a path is a Windows drive root (e.g., C:\\, D:\\).
+    """
+    try:
+        resolved = path.resolve()
+        # On Windows, drive roots have no parent beyond the drive letter
+        return len(resolved.parts) == 1 and resolved.drive == str(resolved)
+    except Exception:
+        return False
+
 
 # ---------------------------------------------------------------------------
 # Normalization
@@ -116,10 +143,13 @@ def get_search_locations(
         current_directory = Path.cwd()
 
     locations = {
-        "workspace": current_directory,
-        "project": current_directory,
         "current directory": current_directory,
     }
+
+    # Use workspace root if set, otherwise fall back to current_directory
+    workspace_root = get_workspace_root() or current_directory
+    locations["workspace"] = workspace_root
+    locations["project"] = workspace_root
 
     locations.update(get_user_locations())
     locations.update(get_available_drives())
@@ -134,6 +164,7 @@ def get_search_locations(
 def resolve_location(
     location: str,
     current_directory: Path | None = None,
+    allow_drive_root: bool = False,
 ) -> Path:
     """
     Resolve a planner supplied location into a filesystem Path.
@@ -145,7 +176,7 @@ def resolve_location(
     • Relative paths
 
     Raises:
-        ValueError
+        ValueError: If location is a drive root and allow_drive_root is False.
     """
 
     if current_directory is None:
@@ -163,6 +194,13 @@ def resolve_location(
 
     # Absolute path
     if candidate.is_absolute():
+
+        # Gate drive-root searches
+        if not allow_drive_root and is_drive_root(candidate):
+            raise ValueError(
+                f"Drive-root search not allowed: '{location}'. "
+                "Use a specific subdirectory or enable allow_drive_root."
+            )
 
         if candidate.exists():
             return candidate

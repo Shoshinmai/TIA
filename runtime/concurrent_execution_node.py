@@ -271,18 +271,52 @@ async def concurrent_execution_node(
     # If the reconciliation instead leaves the entire TaskPlan
     # exhausted, we use PLAN_EXHAUSTED. This mirrors the legacy
     # runtime's semantic final-review boundary.
+    #
+    # If no tasks executed but plan is incomplete, we must
+    # distinguish between:
+    #   - Plan has BLOCKED tasks -> TASK_BLOCKED
+    #   - Plan has no READY work and no blocked tasks -> stalled/no-progress
+    #     Use TASK_BLOCKED to keep runtime in REVIEWING for Critic decision
     # ==========================================================
 
     if TaskPlanManager.is_plan_complete(
         plan=updated_plan,
     ):
         transition_event = RuntimeEvent.PLAN_EXHAUSTED
-    elif wave_executed_tasks == 0 and not TaskPlanManager.is_plan_complete(
-        plan=updated_plan,
-    ):
-        transition_event = RuntimeEvent.PLAN_EXHAUSTED
+    elif wave_executed_tasks == 0:
+        # No tasks executed in this wave. Check why.
+        blocked_tasks = TaskPlanManager.get_blocked_tasks(plan=updated_plan)
+        if blocked_tasks:
+            # Tasks are blocked by failed/cancelled dependencies
+            transition_event = RuntimeEvent.TASK_BLOCKED
+        else:
+            # No READY tasks, no BLOCKED tasks, but plan incomplete.
+            # This is a stalled/no-progress condition. Keep in REVIEWING
+            # so the Critic can decide on RETRY_TASK, PLAN_UPDATE_REQUIRED,
+            # or REPLAN_REQUIRED.
+            transition_event = RuntimeEvent.TASK_BLOCKED
     else:
         transition_event = RuntimeEvent.EXECUTION_COMPLETED
+
+    # ==========================================================
+    # BUDGET TRACKING
+    # ==========================================================
+    #
+    # Record wave progress for budget tracking. If budget is exhausted,
+    # override the transition event to BUDGET_EXHAUSTED.
+    # ==========================================================
+
+    RuntimeKernel.record_wave_progress(
+        runtime_state=runtime_state,
+        wave_executed_tasks=wave_executed_tasks,
+        plan_execution_outcome=plan_execution_outcome,
+    )
+
+    if RuntimeKernel.check_budget_exhaustion(
+        runtime_state=runtime_state,
+        plan_execution_outcome=plan_execution_outcome,
+    ):
+        transition_event = RuntimeEvent.BUDGET_EXHAUSTED
 
     # ==========================================================
     # MOVE RUNTIME INTO REVIEWING

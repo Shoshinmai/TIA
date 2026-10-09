@@ -89,6 +89,19 @@ class TaskItem(BaseModel):
         ),
     )
 
+    # Budget tracking for convergence
+    attempt_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of execution attempts made for this task.",
+    )
+
+    max_attempts: int = Field(
+        default=3,
+        ge=1,
+        description="Maximum allowed execution attempts for this task.",
+    )
+
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Planner/runtime metadata associated with the task.",

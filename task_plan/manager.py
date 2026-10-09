@@ -234,9 +234,18 @@ class TaskPlanManager:
                 "Only IN_PROGRESS tasks may be retried."
             )
 
+        # Check attempt budget
+        if task.attempt_count >= task.max_attempts:
+            raise ValueError(
+                f"Task '{task_id}' has exhausted its attempt budget "
+                f"({task.attempt_count}/{task.max_attempts}). "
+                "Cannot retry further."
+            )
+
         task.status = TaskItemStatus.READY
         task.confirmed = False
         task.evidence.clear()
+        task.attempt_count += 1
 
     @staticmethod
     def retry_failed_task(
@@ -270,10 +279,19 @@ class TaskPlanManager:
                 "Only FAILED tasks may enter concurrent retry."
             )
 
+        # Check attempt budget
+        if task.attempt_count >= task.max_attempts:
+            raise ValueError(
+                f"Task '{task_id}' has exhausted its attempt budget "
+                f"({task.attempt_count}/{task.max_attempts}). "
+                "Cannot retry further."
+            )
+
         task.status = TaskItemStatus.READY
         task.confirmed = False
         task.evidence.clear()
         task.blockers.clear()
+        task.attempt_count += 1
 
     @staticmethod
     def retry_completed_task(
@@ -306,9 +324,18 @@ class TaskPlanManager:
                 "Only COMPLETED tasks may enter completed retry."
             )
 
+        # Check attempt budget
+        if task.attempt_count >= task.max_attempts:
+            raise ValueError(
+                f"Task '{task_id}' has exhausted its attempt budget "
+                f"({task.attempt_count}/{task.max_attempts}). "
+                "Cannot retry further."
+            )
+
         task.status = TaskItemStatus.READY
         task.confirmed = False
         task.evidence.clear()
+        task.attempt_count += 1
 
     @staticmethod
     def confirm_task(
@@ -551,13 +578,12 @@ class TaskPlanManager:
 
         Completed tasks are immutable execution history and are preserved.
 
-        All unfinished tasks from the previous plan are discarded. This
-        includes the previous IN_PROGRESS task because PLAN_UPDATE_REQUIRED
-        means the previous unfinished execution strategy must be reconsidered.
-
-        Planner-generated tasks are treated only as proposed future work.
-        They are therefore normalized to PENDING before dependency readiness
-        is evaluated.
+        Planner-generated tasks are reconciled against existing unfinished tasks:
+        - If a proposed task matches an existing unfinished task (by objective + dependencies),
+          the existing task is preserved with its runtime state (task_id, evidence, confirmed,
+          blockers, attempt_count, max_attempts).
+        - If no match is found, the proposed task is added as new work (PENDING).
+        - Unfinished tasks with no matching proposal are preserved as-is.
 
         The TaskPlanManager, not the Planner, owns task lifecycle state.
         """
@@ -570,42 +596,77 @@ class TaskPlanManager:
             task for task in plan.tasks if task.status == TaskItemStatus.COMPLETED
         ]
 
-        # Only keep unfinished tasks (IN_PROGRESS, FAILED, BLOCKED, CANCELLED,
-        # PENDING, READY). PLAN_UPDATE is additive and must not discard
-        # unfinished work (I6). We preserve the authoritative set of unfinished
-        # tasks exactly as they are in the current plan.
-
-        unfinished_tasks = [
+        # Get existing unfinished tasks (IN_PROGRESS, FAILED, BLOCKED, CANCELLED, PENDING, READY)
+        existing_unfinished = [
             task
             for task in plan.tasks
             if task.status != TaskItemStatus.COMPLETED
         ]
 
         # --------------------------------------------------------------
-        # Planner output represents proposed additional future work.
-        # The Planner must never be allowed to directly establish
-        # IN_PROGRESS state.
+        # Reconcile planner-proposed tasks with existing unfinished tasks.
+        # Conservative matching: exact objective + same dependency set.
         # --------------------------------------------------------------
 
+        # Build a lookup for existing unfinished tasks by (objective, dependencies_tuple)
+        existing_by_key = {}
+        for task in existing_unfinished:
+            key = (task.objective.strip().lower(), tuple(sorted(task.dependencies)))
+            if key not in existing_by_key:
+                existing_by_key[key] = task
+
+        matched_existing = set()
         replacement_tasks: list[TaskItem] = []
 
-        for task in tasks:
+        for proposed_task in tasks:
 
-            if task.status == TaskItemStatus.COMPLETED:
+            if proposed_task.status == TaskItemStatus.COMPLETED:
                 raise ValueError(
                     "Planner-generated replacement tasks cannot be " "marked COMPLETED."
                 )
 
-            task.status = TaskItemStatus.PENDING
+            # Try to match with existing unfinished task
+            proposed_key = (proposed_task.objective.strip().lower(), tuple(sorted(proposed_task.dependencies)))
+            existing_task = existing_by_key.get(proposed_key)
 
-            replacement_tasks.append(task)
+            if existing_task is not None and proposed_key not in matched_existing:
+                # Match found: preserve existing task with its runtime state
+                # The proposed task may have updated success_criteria, so merge them
+                if proposed_task.success_criteria:
+                    existing_task.success_criteria = proposed_task.success_criteria
+                # Priority can be updated by planner
+                existing_task.priority = proposed_task.priority
+                # Metadata can be updated
+                existing_task.metadata.update(proposed_task.metadata)
+
+                # Keep existing task in its current status (READY, IN_PROGRESS, etc.)
+                # but ensure it's not COMPLETED
+                if existing_task.status == TaskItemStatus.COMPLETED:
+                    existing_task.status = TaskItemStatus.PENDING
+
+                matched_existing.add(proposed_key)
+                replacement_tasks.append(existing_task)
+            else:
+                # No match: this is genuinely new work
+                new_task = proposed_task.model_copy(deep=True)
+                new_task.status = TaskItemStatus.PENDING
+                replacement_tasks.append(new_task)
 
         # --------------------------------------------------------------
-        # Additive PLAN_UPDATE: keep all unfinished tasks, append only new.
-        # (I6: never discards unfinished)
+        # Preserve unmatched existing unfinished tasks.
+        # These are tasks that exist in the plan but weren't in the planner's output.
         # --------------------------------------------------------------
 
-        plan.tasks = completed_tasks + unfinished_tasks + replacement_tasks
+        for task in existing_unfinished:
+            key = (task.objective.strip().lower(), tuple(sorted(task.dependencies)))
+            if key not in matched_existing:
+                replacement_tasks.append(task)
+
+        # --------------------------------------------------------------
+        # Final plan: completed + reconciled/replacement tasks
+        # --------------------------------------------------------------
+
+        plan.tasks = completed_tasks + replacement_tasks
 
         # --------------------------------------------------------------
         # Resolve which replacement tasks are immediately executable.
