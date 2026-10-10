@@ -77,8 +77,8 @@ def runtime_stage_mapping() -> dict:
         RuntimeStage.PLANNER: "planner",
         RuntimeStage.EXECUTOR: "concurrent_execution",
         RuntimeStage.CRITIC: "critic",
-        RuntimeStage.TERMINATE: "output",
-        RuntimeStage.ERROR: "output",
+        RuntimeStage.TERMINATE: "output_consistency",
+        RuntimeStage.ERROR: "output_consistency",
     }
 
 
