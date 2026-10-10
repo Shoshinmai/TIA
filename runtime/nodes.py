@@ -21,6 +21,7 @@ from runtime.models import (
 )
 from runtime.stages import RuntimeStage
 from state import TerminalState
+import state
 from task_executor.workflow_runtime import WorkflowRuntime
 from task_plan.manager import TaskPlanManager
 from task_plan.models import TaskItemStatus
@@ -29,6 +30,7 @@ from task_plan.models import TaskItemStatus
 ADMISSION_REASON_PREFIX = "ADMISSION"
 INADMISSIBLE_DECISION_KEY = "inadmissible_decision_count"
 MAX_INADMISSIBLE_DECISIONS = 3
+GOAL_COMPLETION_REJECTION_KEY = "goal_completion_rejection_count"
 
 
 def _evaluate_goal_completion_claim(
@@ -43,8 +45,8 @@ def _evaluate_goal_completion_claim(
     refuses a claim that contradicts authoritative runtime state.
 
     No acceptance bypass: a claim contradicting authoritative state
-    is always refused. The runtime uses bounded rejection recovery
-    (MAX_INADMISSIBLE_DECISIONS) to prevent infinite loops.
+    is always refused. Repeated rejected claims are bounded separately from
+    structurally inadmissible Critic decisions.
     """
 
     verdict = verify_goal_completion_claim(
@@ -56,10 +58,7 @@ def _evaluate_goal_completion_claim(
     if verdict.accepted:
         return False, []
 
-    print(
-        "\n[GOAL COMPLETION GATE] "
-        "Rejected GOAL_COMPLETED claim."
-    )
+    print("\n[GOAL COMPLETION GATE] " "Rejected GOAL_COMPLETED claim.")
 
     for reason in verdict.reasons:
         print(f"[GOAL COMPLETION GATE] {reason}")
@@ -75,29 +74,81 @@ def _recover_from_rejected_goal_completion(
     reasons: list[str],
 ) -> dict:
     """
-    Route the runtime away from a refused GOAL_COMPLETED claim.
+    Recover from a rejected GOAL_COMPLETED claim.
 
-    Failed objectives are requeued for another execution attempt.
-
-    Completed-but-unconfirmed objectives stay in review: the plan
-    is exhausted, but the Critic must still issue TASK_COMPLETED
-    confirmations before a completion claim is admitted. The
-    reviewed execution boundary is preserved so the evidence under
-    review is not severed from the re-invocation.
-
-    Any other unresolved state requires replanning, because a new
-    strategy is needed rather than another identical attempt.
-
-    If the Critic repeatedly claims GOAL_COMPLETED and is rejected,
-    the inadmissible decision budget (MAX_INADMISSIBLE_DECISIONS)
-    will force REPLAN_REQUIRED. If that also exhausts, we terminate
-    with partial completion.
+    Rejected claims consume a dedicated budget independent of
+    structurally inadmissible Critic decisions. Once exhausted,
+    terminate with partial completion without accepting the claim.
     """
 
+    rejection_count = (
+        int(
+            runtime_state.metadata.get(
+                GOAL_COMPLETION_REJECTION_KEY,
+                0,
+            )
+        )
+        + 1
+    )
+    runtime_state.metadata[GOAL_COMPLETION_REJECTION_KEY] = rejection_count
+
+    print(
+        "[GOAL COMPLETION GATE] "
+        f"Rejected claim ({rejection_count}:"
+        f"{MAX_GOAL_COMPLETION_REJECTIONS})."
+    )
+
+    # Never accept a rejected claim simply to escape the loop.
+    if rejection_count >= MAX_GOAL_COMPLETION_REJECTIONS:
+        decision_context = RuntimeDecisionContext(
+            rationale=(
+                "The runtime repeatedly rejected GOAL_COMPLETED "
+                "because authoritative state did not establish "
+                "that the goal was achieved. The rejection budget "
+                "is exhausted; terminating with partial completion. "
+                + " ".join(reasons)
+            ),
+            evidence=[
+                RuntimeEvidence(
+                    source="runtime_goal_completion_gate",
+                    observation=reason,
+                )
+                for reason in reasons
+            ],
+            decision_scope="plan",
+            target_task_ids=[],
+        )
+
+        state["execution_workflow"] = None
+
+        ephemeral = state.get("ephemeral_execution_state")
+        if ephemeral is not None:
+            ephemeral.current_attempt_id = None
+
+        RuntimeKernel.handle_event_with_termination(
+            runtime_state=runtime_state,
+            event=RuntimeEvent.BUDGET_EXHAUSTED,
+            decision_context=decision_context,
+            termination_reason=(RuntimeKernel.TERMINAL_REASON_GOAL_COMPLETION_REJECTED),
+        )
+
+        print(
+            "[GOAL COMPLETION GATE] Rejection budget exhausted. "
+            "Terminating with partial completion."
+        )
+
+        return {
+            "runtime_state": runtime_state,
+            "task_plan": task_plan,
+            "plan_execution_outcome": state.get("plan_execution_outcome"),
+            "execution_workflow": None,
+            "ephemeral_execution_state": ephemeral,
+            "critic_runtime_event": None,
+            "critic_rejection": reasons,
+        }
+
     failed_tasks = [
-        task
-        for task in task_plan.tasks
-        if task.status == TaskItemStatus.FAILED
+        task for task in task_plan.tasks if task.status == TaskItemStatus.FAILED
     ]
 
     unconfirmed_tasks = [
@@ -111,46 +162,31 @@ def _recover_from_rejected_goal_completion(
     preserve_outcome = False
 
     if failed_tasks:
-
         for task in failed_tasks:
-
             TaskPlanManager.retry_failed_task(
                 plan=task_plan,
                 task_id=task.task_id,
             )
 
         event = RuntimeEvent.RETRY_TASK
-
         decision_scope = "task"
-
-        target_task_ids = [
-            task.task_id
-            for task in failed_tasks
-        ]
+        target_task_ids = [task.task_id for task in failed_tasks]
 
     elif unconfirmed_tasks:
-
         event = RuntimeEvent.PLAN_EXHAUSTED
-
         decision_scope = "plan"
-
         target_task_ids = []
-
         preserve_outcome = True
 
     else:
-
         event = RuntimeEvent.REPLAN_REQUIRED
-
         decision_scope = "plan"
-
         target_task_ids = []
 
     rejection_context = RuntimeDecisionContext(
         rationale=(
-            "GOAL_COMPLETED was refused because the authoritative "
-            "runtime state still contains unresolved work. "
-            + " ".join(reasons)
+            "GOAL_COMPLETED was refused because authoritative "
+            "runtime state still contains unresolved work. " + " ".join(reasons)
         ),
         evidence=[
             RuntimeEvidence(
@@ -163,18 +199,10 @@ def _recover_from_rejected_goal_completion(
         target_task_ids=target_task_ids,
     )
 
-    # ------------------------------------------------------
-    # The reviewed execution boundary must not survive into a
-    # new execution or planning cycle. It is preserved when the
-    # runtime simply re-invokes the Critic for confirmations.
-    # ------------------------------------------------------
-
     preserved_outcome = state.get("plan_execution_outcome")
 
     if not preserve_outcome:
-
         state["plan_execution_outcome"] = None
-
         preserved_outcome = None
 
     state["execution_workflow"] = None
@@ -234,30 +262,24 @@ def _inadmissible_decision_recovery(
         + 1
     )
 
-    runtime_state.metadata[
-        INADMISSIBLE_DECISION_KEY
-    ] = count
+    runtime_state.metadata[INADMISSIBLE_DECISION_KEY] = count
 
     print(
         "[DECISION ADMISSION] "
         f"Inadmissible decision ({count}:"
-        f"{MAX_INADMISSIBLE_DECISIONS}): "
-        + " | ".join(reasons)
+        f"{MAX_INADMISSIBLE_DECISIONS}): " + " | ".join(reasons)
     )
 
     if count >= MAX_INADMISSIBLE_DECISIONS:
 
-        runtime_state.metadata[
-            INADMISSIBLE_DECISION_KEY
-        ] = 0
+        runtime_state.metadata[INADMISSIBLE_DECISION_KEY] = 0
 
         decision_context = RuntimeDecisionContext(
             rationale=(
                 "The Critic repeatedly produced decisions that "
                 "could not be applied to authoritative runtime "
                 "state. The runtime terminates with partial "
-                "completion. "
-                + " ".join(reasons)
+                "completion. " + " ".join(reasons)
             ),
             evidence=[
                 RuntimeEvidence(
@@ -607,10 +629,7 @@ def runtime_critic_result_node(
 
         rejection = state.get("critic_rejection") or []
 
-        if any(
-            str(reason).startswith(ADMISSION_REASON_PREFIX)
-            for reason in rejection
-        ):
+        if any(str(reason).startswith(ADMISSION_REASON_PREFIX) for reason in rejection):
             return _inadmissible_decision_recovery(
                 state=state,
                 runtime_state=runtime_state,
@@ -684,11 +703,9 @@ def runtime_critic_result_node(
         # Memory, regardless of which path produced it.
         # ------------------------------------------------------
 
-        rejection_required, rejection_reasons = (
-            _evaluate_goal_completion_claim(
-                state=state,
-                task_plan=task_plan,
-            )
+        rejection_required, rejection_reasons = _evaluate_goal_completion_claim(
+            state=state,
+            task_plan=task_plan,
         )
 
         if rejection_required:
@@ -699,6 +716,10 @@ def runtime_critic_result_node(
                 runtime_state=runtime_state,
                 reasons=rejection_reasons,
             )
+        runtime_state.metadata.pop(
+            GOAL_COMPLETION_REJECTION_KEY,
+            None,
+        )
 
         # ------------------------------------------------------
         # Finalize any task that is still marked IN_PROGRESS.
@@ -817,9 +838,7 @@ def runtime_critic_result_node(
                 # evaluated by the deterministic gate.
                 # --------------------------------------------------
 
-                for task_id in (
-                    decision_context.target_task_ids or []
-                ):
+                for task_id in decision_context.target_task_ids or []:
 
                     task = TaskPlanManager.find_task(
                         plan=task_plan,
@@ -842,11 +861,9 @@ def runtime_critic_result_node(
                         task_id=task_id,
                     )
 
-                rejection_required, rejection_reasons = (
-                    _evaluate_goal_completion_claim(
-                        state=state,
-                        task_plan=task_plan,
-                    )
+                rejection_required, rejection_reasons = _evaluate_goal_completion_claim(
+                    state=state,
+                    task_plan=task_plan,
                 )
 
                 if rejection_required:
@@ -857,6 +874,10 @@ def runtime_critic_result_node(
                         runtime_state=runtime_state,
                         reasons=rejection_reasons,
                     )
+                runtime_state.metadata.pop(
+                    GOAL_COMPLETION_REJECTION_KEY,
+                    None,
+                )
 
                 RuntimeKernel.handle_event(
                     runtime_state=runtime_state,
@@ -1098,7 +1119,8 @@ def runtime_critic_result_node(
         "critic_runtime_event": None,
         "execution_workflow": state.get("execution_workflow"),
     }
-    
+
+
 async def runtime_output_node(
     state: TerminalState,
 ) -> dict:
@@ -1140,15 +1162,11 @@ async def runtime_output_node(
         # fallback.
         # ------------------------------------------------------
 
-        fallback_messages = (
-            OUTPUT_FALLBACK_MESSAGES
-        )
+        fallback_messages = OUTPUT_FALLBACK_MESSAGES
 
         output = AgentOutput(
             output_type=context.output_type,
-            message=fallback_messages[
-                context.output_type
-            ],
+            message=fallback_messages[context.output_type],
         )
 
     return {
@@ -1253,16 +1271,16 @@ def _apply_concurrent_critic_decision(
 
                 else:
 
-                        return _inadmissible_decision_recovery(
-                            state=state,
-                            runtime_state=runtime_state,
-                            reasons=[
-                                "ADMISSION: Concurrent RETRY_TASK decision "
-                                f"targeted task '{task.task_id}', but its "
-                                f"current status is '{task.status}'. "
-                                "Only FAILED or COMPLETED tasks may be retried."
-                            ],
-                        )
+                    return _inadmissible_decision_recovery(
+                        state=state,
+                        runtime_state=runtime_state,
+                        reasons=[
+                            "ADMISSION: Concurrent RETRY_TASK decision "
+                            f"targeted task '{task.task_id}', but its "
+                            f"current status is '{task.status}'. "
+                            "Only FAILED or COMPLETED tasks may be retried."
+                        ],
+                    )
 
             # --------------------------------------------------
             # The previous PlanExecutionOutcome describes the
@@ -1454,11 +1472,9 @@ def _apply_concurrent_critic_decision(
             # allowed to end the runtime.
             # ------------------------------------------------------
 
-            rejection_required, rejection_reasons = (
-                _evaluate_goal_completion_claim(
-                    state=state,
-                    task_plan=task_plan,
-                )
+            rejection_required, rejection_reasons = _evaluate_goal_completion_claim(
+                state=state,
+                task_plan=task_plan,
             )
 
             if rejection_required:
@@ -1469,6 +1485,10 @@ def _apply_concurrent_critic_decision(
                     runtime_state=runtime_state,
                     reasons=rejection_reasons,
                 )
+            runtime_state.metadata.pop(
+                GOAL_COMPLETION_REJECTION_KEY,
+                None,
+            )
 
             state["execution_workflow"] = None
 

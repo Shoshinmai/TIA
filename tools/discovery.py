@@ -14,7 +14,10 @@ from models import (
     SearchContentInput,
 )
 from utils.filesystem_helpers import safe_walk
-from utils.location_resolver import resolve_location
+from utils.location_resolver import (
+    get_workspace_root,
+    resolve_location,
+)
 from utils.text_helpers import (
     find_search_backend,
     is_binary_file,
@@ -27,10 +30,16 @@ DEFAULT_MAX_DEPTH = 10
 DEFAULT_TRAVERSAL_TIMEOUT = 30.0  # seconds
 
 
-def _is_drive_root_search(location: str) -> bool:
+def _is_drive_root_search(
+    location: str,
+    workspace_root: Path | None = None,
+) -> bool:
     """Check if the location resolves to a drive root."""
     try:
-        root_path = resolve_location(location)
+        root_path = resolve_location(
+            location,
+            workspace_root=workspace_root,
+        )
         return len(root_path.parts) == 1 and root_path.drive == str(root_path)
     except Exception:
         return False
@@ -43,13 +52,14 @@ def _search_files_sync(
     case_sensitive: bool = False,
     max_depth: int = DEFAULT_MAX_DEPTH,
     allow_drive_root: bool = False,
+    workspace_root: Path | None = None,
 ) -> dict:
     """
     Synchronous implementation of search_files with safety bounds.
     """
 
     # Gate drive-root searches
-    if _is_drive_root_search(location) and not allow_drive_root:
+    if _is_drive_root_search(location, workspace_root) and not allow_drive_root:
         return {
             "success": False,
             "query": query,
@@ -62,7 +72,11 @@ def _search_files_sync(
         }
 
     try:
-        root_path = resolve_location(location, allow_drive_root=allow_drive_root)
+        root_path = resolve_location(
+            location,
+            allow_drive_root=allow_drive_root,
+            workspace_root=workspace_root,
+        )
 
     except ValueError as exc:
         return {
@@ -88,11 +102,7 @@ def _search_files_sync(
             exclude_patterns=None,  # Uses DEFAULT_EXCLUDE_DIRS
         )
 
-        search_query = (
-            query
-            if case_sensitive
-            else query.lower()
-        )
+        search_query = query if case_sensitive else query.lower()
 
         for path in iterator:
             # Check traversal timeout
@@ -103,16 +113,10 @@ def _search_files_sync(
             if not path.is_file():
                 continue
 
-            filename = (
-                path.name
-                if case_sensitive
-                else path.name.lower()
-            )
+            filename = path.name if case_sensitive else path.name.lower()
 
             if search_query in filename:
-                matches.append(
-                    str(path.resolve())
-                )
+                matches.append(str(path.resolve()))
 
                 if len(matches) >= MAX_RESULTS:
                     break
@@ -170,6 +174,7 @@ async def search_files(
         case_sensitive,
         max_depth,
         allow_drive_root,
+        get_workspace_root(),
     )
 
 
@@ -179,13 +184,14 @@ def _list_directory_sync(
     include_hidden: bool = False,
     max_depth: int = 2,
     allow_drive_root: bool = False,
+    workspace_root: Path | None = None,
 ) -> dict:
     """
     Synchronous implementation of list_directory with safety bounds.
     """
 
     # Gate drive-root searches
-    if _is_drive_root_search(location) and not allow_drive_root:
+    if _is_drive_root_search(location, workspace_root) and not allow_drive_root:
         return {
             "success": False,
             "location": location,
@@ -194,7 +200,11 @@ def _list_directory_sync(
         }
 
     try:
-        root_path = resolve_location(location, allow_drive_root=allow_drive_root)
+        root_path = resolve_location(
+            location,
+            allow_drive_root=allow_drive_root,
+            workspace_root=workspace_root,
+        )
 
     except ValueError as exc:
         return {
@@ -225,31 +235,22 @@ def _list_directory_sync(
         relative = entry.relative_to(root_path)
 
         if entry.is_dir():
-            directories.append(
-                str(relative)
-            )
+            directories.append(str(relative))
             total_directories += 1
 
         else:
-            files.append(
-                str(relative)
-            )
+            files.append(str(relative))
             total_files += 1
 
     truncated = False
     limit_reached = None
 
     if len(directories) > MAX_DIRECTORY_RESULTS:
-        directories = directories[
-            :MAX_DIRECTORY_RESULTS
-        ]
+        directories = directories[:MAX_DIRECTORY_RESULTS]
         truncated = True
         limit_reached = "max_results"
 
-    remaining = (
-        MAX_DIRECTORY_RESULTS
-        - len(directories)
-    )
+    remaining = MAX_DIRECTORY_RESULTS - len(directories)
 
     if remaining < 0:
         remaining = 0
@@ -304,6 +305,7 @@ async def list_directory(
         include_hidden,
         max_depth,
         allow_drive_root,
+        get_workspace_root(),
     )
 
 
@@ -315,6 +317,7 @@ def _search_content_sync(
     max_results: int = 50,
     max_depth: int = DEFAULT_MAX_DEPTH,
     allow_drive_root: bool = False,
+    workspace_root: Path | None = None,
 ) -> dict:
     """
     Synchronous implementation of search_content with safety bounds.
@@ -325,7 +328,7 @@ def _search_content_sync(
     """
 
     # Gate drive-root searches
-    if _is_drive_root_search(location) and not allow_drive_root:
+    if _is_drive_root_search(location, workspace_root) and not allow_drive_root:
         return {
             "success": False,
             "query": query,
@@ -335,7 +338,11 @@ def _search_content_sync(
         }
 
     try:
-        root_path = resolve_location(location, allow_drive_root=allow_drive_root)
+        root_path = resolve_location(
+            location,
+            allow_drive_root=allow_drive_root,
+            workspace_root=workspace_root,
+        )
 
     except ValueError as exc:
         return {
@@ -396,6 +403,7 @@ async def search_content(
         max_results,
         max_depth,
         allow_drive_root,
+        get_workspace_root(),
     )
 
 
@@ -413,10 +421,7 @@ def _search_with_ripgrep(
             "query": query,
             "backend": "ripgrep",
             "root": str(root),
-            "error": (
-                "Ripgrep is not installed or "
-                "is not available on PATH."
-            ),
+            "error": ("Ripgrep is not installed or " "is not available on PATH."),
         }
 
     command = [
@@ -477,10 +482,7 @@ def _search_with_ripgrep(
             "error": str(exc),
         }
 
-    if (
-        result.returncode not in (0, 1)
-        or result.stderr.strip()
-    ):
+    if result.returncode not in (0, 1) or result.stderr.strip():
         return {
             "success": False,
             "query": query,
@@ -488,10 +490,7 @@ def _search_with_ripgrep(
             "root": str(root),
             "error": (
                 result.stderr.strip()
-                or (
-                    "Ripgrep failed with return code "
-                    f"{result.returncode}."
-                )
+                or ("Ripgrep failed with return code " f"{result.returncode}.")
             ),
         }
 
@@ -593,11 +592,7 @@ def _search_with_python(
     timeout_reached = False
     traversal_start = time.time()
 
-    search_query = (
-        query
-        if case_sensitive
-        else query.lower()
-    )
+    search_query = query if case_sensitive else query.lower()
 
     try:
         for path in safe_walk(
@@ -631,40 +626,23 @@ def _search_with_python(
                         file,
                         start=1,
                     ):
-                        searchable_line = (
-                            line
-                            if case_sensitive
-                            else line.lower()
-                        )
+                        searchable_line = line if case_sensitive else line.lower()
 
-                        if (
-                            search_query
-                            not in searchable_line
-                        ):
+                        if search_query not in searchable_line:
                             continue
 
-                        if (
-                            len(matches)
-                            >= max_results
-                        ):
+                        if len(matches) >= max_results:
                             truncated = True
                             break
 
-                        column = (
-                            searchable_line.find(
-                                search_query
-                            )
-                            + 1
-                        )
+                        column = searchable_line.find(search_query) + 1
 
                         matches.append(
                             {
                                 "file": str(path),
                                 "line": line_number,
                                 "column": column,
-                                "snippet": line.rstrip(
-                                    "\r\n"
-                                ),
+                                "snippet": line.rstrip("\r\n"),
                             }
                         )
 

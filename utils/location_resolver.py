@@ -1,3 +1,6 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 import string
 from pathlib import Path
 
@@ -19,21 +22,32 @@ LOCATION_ALIASES = {
     "current folder": "current directory",
 }
 
-# Module-level workspace root for tool access (thread-local fallback).
-# Set by task_initializer at the start of each run.
-_WORKSPACE_ROOT: Path | None = None
-
-
-def set_workspace_root(path: str | Path) -> None:
-    """Set the workspace root for location resolution."""
-    global _WORKSPACE_ROOT
-    _WORKSPACE_ROOT = Path(path).resolve() if path else None
+# Context-local workspace for the currently executing worker.
+_WORKSPACE_ROOT: ContextVar[Path | None] = ContextVar(
+    "tia_workspace_root",
+    default=None,
+)
 
 
 def get_workspace_root() -> Path | None:
-    """Get the current workspace root."""
-    return _WORKSPACE_ROOT
+    """Return the workspace bound to the current execution context."""
+    return _WORKSPACE_ROOT.get()
 
+@contextmanager
+def workspace_scope(
+    path: str | Path | None,
+) -> Iterator[None]:
+    """Bind a workspace for one worker execution and restore it afterward."""
+    workspace = (
+        Path(path).resolve()
+        if path and str(path) != "workspace:unavailable"
+        else None
+    )
+    token = _WORKSPACE_ROOT.set(workspace)
+    try:
+        yield
+    finally:
+        _WORKSPACE_ROOT.reset(token)
 
 def is_drive_root(path: Path) -> bool:
     """
@@ -148,7 +162,11 @@ def get_search_locations(
     }
 
     # Use workspace root if provided, otherwise fall back to module-level, then current_directory
-    effective_workspace = workspace_root or get_workspace_root() or current_directory
+    effective_workspace = (
+        workspace_root
+        if workspace_root is not None
+        else get_workspace_root()
+    ) or current_directory
     locations["workspace"] = effective_workspace
     locations["project"] = effective_workspace
 
@@ -187,7 +205,11 @@ def resolve_location(
     normalized = normalize_location(location)
 
     # Use explicit workspace_root if provided, otherwise fall back to module-level
-    effective_workspace_root = workspace_root or get_workspace_root()
+    effective_workspace_root = (
+        workspace_root
+        if workspace_root is not None
+        else get_workspace_root()
+    )
     locations = get_search_locations(current_directory, effective_workspace_root)
 
     # Planner keywords

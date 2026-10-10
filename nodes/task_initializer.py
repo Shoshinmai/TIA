@@ -11,7 +11,6 @@ from models import (
 )
 from runtime.models import RuntimeState
 from state import TerminalState
-from utils.location_resolver import set_workspace_root
 
 
 # async def task_initializer_node(
@@ -60,8 +59,6 @@ def task_initializer_node(
     runtime_state = RuntimeState()
     if workspace != "workspace:unavailable":
         runtime_state.metadata["workspace_root"] = workspace
-        # Also set in location resolver for tool access (session-wide)
-        set_workspace_root(workspace)
 
     return {
         "task": task,

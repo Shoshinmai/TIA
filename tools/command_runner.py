@@ -90,6 +90,7 @@ async def run_command(
     command: str,
     *,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    working_directory: str | Path | None = None,
 ) -> dict[str, Any]:
     """
     Execute one shell command asynchronously.
@@ -116,6 +117,7 @@ async def run_command(
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                cwd=working_directory,
             )
 
         else:
@@ -124,6 +126,7 @@ async def run_command(
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                cwd=working_directory,
             )
 
         try:

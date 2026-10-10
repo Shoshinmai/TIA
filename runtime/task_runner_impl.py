@@ -14,10 +14,12 @@ from runtime.task_runner import (
 from runtime.task_state_snapshot import (
     build_task_execution_snapshot,
 )
+from state import TerminalState
 from task_executor.task_worker import (
     TaskWorker,
 )
 from task_plan.models import TaskItem
+from utils.location_resolver import workspace_scope
 
 
 class TaskRunner(AsyncTaskRunner):
@@ -68,7 +70,7 @@ class TaskRunner(AsyncTaskRunner):
         context: TaskExecutionContext,
         *,
         task: TaskItem,
-        state: dict,
+        state: TerminalState,
     ) -> TaskExecutionResult:
 
         task_state = build_task_execution_snapshot(
@@ -76,8 +78,9 @@ class TaskRunner(AsyncTaskRunner):
             task=task,
         )
 
-        return await self.worker.execute(
-            state=task_state,
-            task_execution=context,
-            task=task,
-        )
+        with workspace_scope(task_state.get("workspace")):
+            return await self.worker.execute(
+                state=task_state,
+                task_execution=context,
+                task=task,
+            )
