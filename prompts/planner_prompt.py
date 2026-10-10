@@ -1454,6 +1454,12 @@ For validation, target the behavior or contract that matters to the user's
 goal. Broader validation is justified only when the affected surface or an
 explicit requirement makes it necessary.
 
+# ROOT OF THE WORKSPACE
+
+<workspace_root>
+{workspace}
+</workspace_root>
+
 # CURRENT TASK KNOWLEDGE
 
 <task_knowledge>

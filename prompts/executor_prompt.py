@@ -1286,11 +1286,16 @@ Correctness of the workflow is more important than completeness or exploration.
 12. If required information is unavailable, stop at the smallest workflow that
     obtains that information.
 
+# CURRENT ROOT PATH OF THE WORKSPACE
+
+<workspace_root>
+{workspace}
+</workspace_root>
+
 # CURRENT OBJECTIVE IS THE EXECUTION BOUNDARY
 
-The current objective is:
-
 <current_objective>
+The current objective is:
 {objective}
 </current_objective>
 

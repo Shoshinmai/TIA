@@ -19,8 +19,8 @@ LOCATION_ALIASES = {
     "current folder": "current directory",
 }
 
-# Module-level workspace root, set at runtime from the resolved state.
-# This allows tools to resolve "workspace" without direct state access.
+# Module-level workspace root for tool access (thread-local fallback).
+# Set by task_initializer at the start of each run.
 _WORKSPACE_ROOT: Path | None = None
 
 
@@ -134,6 +134,7 @@ def get_available_drives() -> dict[str, Path]:
 
 def get_search_locations(
     current_directory: Path | None = None,
+    workspace_root: Path | None = None,
 ) -> dict[str, Path]:
     """
     Build the planner-visible location map.
@@ -146,10 +147,10 @@ def get_search_locations(
         "current directory": current_directory,
     }
 
-    # Use workspace root if set, otherwise fall back to current_directory
-    workspace_root = get_workspace_root() or current_directory
-    locations["workspace"] = workspace_root
-    locations["project"] = workspace_root
+    # Use workspace root if provided, otherwise fall back to module-level, then current_directory
+    effective_workspace = workspace_root or get_workspace_root() or current_directory
+    locations["workspace"] = effective_workspace
+    locations["project"] = effective_workspace
 
     locations.update(get_user_locations())
     locations.update(get_available_drives())
@@ -164,6 +165,7 @@ def get_search_locations(
 def resolve_location(
     location: str,
     current_directory: Path | None = None,
+    workspace_root: Path | None = None,
     allow_drive_root: bool = False,
 ) -> Path:
     """
@@ -184,7 +186,9 @@ def resolve_location(
 
     normalized = normalize_location(location)
 
-    locations = get_search_locations(current_directory)
+    # Use explicit workspace_root if provided, otherwise fall back to module-level
+    effective_workspace_root = workspace_root or get_workspace_root()
+    locations = get_search_locations(current_directory, effective_workspace_root)
 
     # Planner keywords
     if normalized in locations:

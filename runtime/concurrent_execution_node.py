@@ -316,16 +316,32 @@ async def concurrent_execution_node(
         runtime_state=runtime_state,
         plan_execution_outcome=plan_execution_outcome,
     ):
-        transition_event = RuntimeEvent.BUDGET_EXHAUSTED
+        exhausted, term_reason = RuntimeKernel.check_budget_exhaustion(
+            runtime_state=runtime_state,
+            plan_execution_outcome=plan_execution_outcome,
+        )
+        if exhausted:
+            transition_event = RuntimeEvent.BUDGET_EXHAUSTED
+            # Set termination reason before handling event
+            runtime_state.metadata["termination_reason"] = term_reason
 
     # ==========================================================
     # MOVE RUNTIME INTO REVIEWING
     # ==========================================================
 
-    next_stage = RuntimeKernel.handle_event(
-        runtime_state=runtime_state,
-        event=transition_event,
-    )
+    # Use termination-aware handler for BUDGET_EXHAUSTED
+    if transition_event == RuntimeEvent.BUDGET_EXHAUSTED:
+        term_reason = runtime_state.metadata.get("termination_reason")
+        next_stage = RuntimeKernel.handle_event_with_termination(
+            runtime_state=runtime_state,
+            event=transition_event,
+            termination_reason=term_reason,
+        )
+    else:
+        next_stage = RuntimeKernel.handle_event(
+            runtime_state=runtime_state,
+            event=transition_event,
+        )
 
     print()
     print(

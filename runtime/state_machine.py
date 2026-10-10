@@ -78,6 +78,16 @@ _TRANSITIONS: dict[Transition, RuntimeMode] = {
         RuntimeMode.EXECUTING,
         RuntimeEvent.PLAN_EXHAUSTED,
     ): RuntimeMode.REVIEWING,
+    # Empty/incomplete wave or budget exhaustion from EXECUTING
+    # must transition to REVIEWING (for Critic) or FINISHED.
+    Transition(
+        RuntimeMode.EXECUTING,
+        RuntimeEvent.TASK_BLOCKED,
+    ): RuntimeMode.REVIEWING,
+    Transition(
+        RuntimeMode.EXECUTING,
+        RuntimeEvent.BUDGET_EXHAUSTED,
+    ): RuntimeMode.FINISHED,
     # ================================================================
     # Review
     # ================================================================

@@ -102,6 +102,21 @@ def validate_runtime_state(
     return {}
 
 
+def validate_workspace_state(
+    state: TerminalState,
+) -> dict:
+    """
+    Validate I10 workspace invariance at stable boundaries.
+
+    Validation is intentionally side-effect free.
+    """
+
+    from runtime.consistency import validate_workspace_invariance
+    validate_workspace_invariance(state)
+
+    return {}
+
+
 # ==========================================================
 # Graph
 # ==========================================================
@@ -145,6 +160,11 @@ builder.add_node(
     runtime_planner_result_node,
 )
 
+# builder.add_node(
+#     "planner_consistency",
+#     validate_runtime_state,
+# )
+
 builder.add_node(
     "concurrent_execution",
     concurrent_execution_node,
@@ -155,9 +175,19 @@ builder.add_node(
     runtime_critic_result_node,
 )
 
+# builder.add_node(
+#     "critic_consistency",
+#     validate_runtime_state,
+# )
+
 builder.add_node(
     "runtime_consistency",
     validate_runtime_state,
+)
+
+builder.add_node(
+    "output_consistency",
+    validate_workspace_state,
 )
 
 # OUTPUT
@@ -242,6 +272,11 @@ builder.add_edge(
     "planner_runtime",
 )
 
+# builder.add_edge(
+#     "planner_runtime",
+#     "planner_consistency",
+# )
+
 builder.add_conditional_edges(
     "planner_runtime",
     runtime_stage_router,
@@ -294,6 +329,11 @@ builder.add_edge(
     "runtime_critic",
 )
 
+# builder.add_edge(
+#     "runtime_critic",
+#     "critic_consistency",
+# )
+
 builder.add_conditional_edges(
     "runtime_critic",
     runtime_stage_router,
@@ -306,10 +346,17 @@ builder.add_conditional_edges(
 #
 # RuntimeStage.TERMINATE / RuntimeStage.ERROR
 #       ↓
+# output_consistency (workspace invariance)
+#       ↓
 # output
 #       ↓
 # END
 # ==========================================================
+
+builder.add_edge(
+    "output_consistency",
+    "output",
+)
 
 builder.add_edge(
     "output",

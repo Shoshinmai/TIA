@@ -62,6 +62,8 @@ class TerminalState(TypedDict):
     
     agent_output: AgentOutput | None
 
+    workspace: str | None
+    
     # ==========================================================
     # GRAPH / TOOL PROTOCOL
     # ==========================================================
@@ -121,5 +123,3 @@ class TerminalState(TypedDict):
     ]
 
     planner_output: Optional[PlanningOutput]
-
-    workspace: str | None = None

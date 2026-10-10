@@ -56,8 +56,11 @@ def task_initializer_node(
     # Resolve workspace root - never use goal text as fallback
     workspace = _resolve_workspace_root(state)
 
-    # Set the workspace root in the location resolver for tool access
+    # Create runtime state and anchor workspace root
+    runtime_state = RuntimeState()
     if workspace != "workspace:unavailable":
+        runtime_state.metadata["workspace_root"] = workspace
+        # Also set in location resolver for tool access (session-wide)
         set_workspace_root(workspace)
 
     return {
@@ -69,7 +72,7 @@ def task_initializer_node(
         "task_plan": None,
         "execution_workflow": None,
         "critic_runtime_event": None,
-        "runtime_state": RuntimeState(),
+        "runtime_state": runtime_state,
         "concurrent_execution": True,
         "persistent_memory": PersistentMemory(),
         "ephemeral_execution_state": EphemeralExecutionState(),

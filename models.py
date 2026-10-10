@@ -142,6 +142,16 @@ class PlannerTask(BaseModel):
         ),
     )
 
+    contract_revision: bool = Field(
+        default=False,
+        description=(
+            "Explicit flag indicating this task's success criteria have been "
+            "deliberately revised. If true, the existing task's success_criteria "
+            "will be replaced, and confirmed/evidence will be reset. The flag "
+            "is consumed during update and not persisted."
+        ),
+    )
+
 
 class TaskPlanningOutput(BaseModel):
     """

@@ -122,6 +122,7 @@ def build_task_execution_snapshot(
         "task_plan": deepcopy(task_plan),
         "task": deepcopy(task),
         "goal": state["goal"],
+        "workspace": state.get("workspace"),
 
         # Worker gets isolated copies with relevant history
         "active_memory": worker_active_memory,

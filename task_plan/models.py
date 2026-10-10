@@ -93,13 +93,33 @@ class TaskItem(BaseModel):
     attempt_count: int = Field(
         default=0,
         ge=0,
-        description="Number of execution attempts made for this task.",
+        description=(
+            "Number of execution attempts made for this task. "
+            "Incremented on READY → IN_PROGRESS transition. "
+            "NOT incremented on retry (requeue). "
+            "max_attempts=3 allows exactly 3 executions (attempt_count 1, 2, 3)."
+        ),
     )
 
     max_attempts: int = Field(
         default=3,
         ge=1,
-        description="Maximum allowed execution attempts for this task.",
+        description=(
+            "Maximum allowed execution attempts for this task. "
+            "When attempt_count >= max_attempts, task cannot be started or retried. "
+            "Default 3 means three total executions allowed."
+        ),
+    )
+
+    # PLAN_UPDATE contract revision flag (transient, not persisted)
+    # Set by planner to indicate deliberate success_criteria revision
+    contract_revision: bool = Field(
+        default=False,
+        description=(
+            "Internal flag for PLAN_UPDATE: if true, allows success_criteria "
+            "to be updated and resets confirmed/evidence. Consumed during update, "
+            "not persisted in authoritative state."
+        ),
     )
 
     metadata: dict[str, Any] = Field(

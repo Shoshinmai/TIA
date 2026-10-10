@@ -31,6 +31,11 @@ class RuntimeKernel:
         - Tool execution
     """
 
+    # Terminal reasons for incomplete completion
+    TERMINAL_REASON_GOAL_COMPLETION_REJECTED = "goal_completion_rejected"
+    TERMINAL_REASON_BUDGET_EXHAUSTED = "budget_exhausted"
+    TERMINAL_REASON_PARTIAL_COMPLETION = "partial_completion"
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -46,6 +51,38 @@ class RuntimeKernel:
         """
         Process a runtime event and return the next runtime stage.
         """
+
+        next_mode = RuntimeStateMachine.transition(
+            current_mode=runtime_state.mode,
+            event=event,
+        )
+
+        cls._update_runtime_state(
+            runtime_state=runtime_state,
+            next_mode=next_mode,
+            event=event,
+            decision_context=decision_context,
+        )
+
+        return RuntimeDispatcher.dispatch(
+            next_mode
+        )
+
+    @classmethod
+    def handle_event_with_termination(
+        cls,
+        *,
+        runtime_state: RuntimeState,
+        event: RuntimeEvent,
+        decision_context: RuntimeDecisionContext | None = None,
+        termination_reason: str | None = None,
+    ) -> RuntimeStage:
+        """
+        Process a runtime event with an explicit termination reason.
+        Used when budget exhaustion or goal rejection forces terminal state.
+        """
+        if termination_reason is not None:
+            runtime_state.metadata["termination_reason"] = termination_reason
 
         next_mode = RuntimeStateMachine.transition(
             current_mode=runtime_state.mode,
@@ -91,6 +128,7 @@ class RuntimeKernel:
         runtime_state.last_event = None
         runtime_state.iteration = 0
         runtime_state.decision_context = None
+        runtime_state.metadata.pop("termination_reason", None)
 
     # ------------------------------------------------------------------
     # Internal Helpers
@@ -134,21 +172,21 @@ class RuntimeKernel:
         cls,
         runtime_state: RuntimeState,
         plan_execution_outcome: Any | None = None,
-    ) -> bool:
+    ) -> tuple[bool, str | None]:
         """
         Check if any budget has been exhausted.
 
-        Returns True if budget exhausted and BUDGET_EXHAUSTED should be emitted.
+        Returns tuple of (exhausted, termination_reason).
         """
         # Check iteration budget
         if runtime_state.iteration >= runtime_state.max_iterations:
-            return True
+            return True, cls.TERMINAL_REASON_BUDGET_EXHAUSTED
 
         # Check no-progress budget
         # A wave makes "no progress" if it executed 0 tasks or all tasks failed
         # without producing new evidence. This is a heuristic.
         if runtime_state.consecutive_no_progress >= runtime_state.max_no_progress:
-            return True
+            return True, cls.TERMINAL_REASON_BUDGET_EXHAUSTED
 
         # Check for repeated decisions (simple heuristic: same event + same targets + same rationale_hash in recent history)
         if len(runtime_state.decision_history) >= 3:
@@ -162,9 +200,9 @@ class RuntimeKernel:
                     for d in recent
                 ):
                     # Same decision repeated 3 times
-                    return True
+                    return True, cls.TERMINAL_REASON_BUDGET_EXHAUSTED
 
-        return False
+        return False, None
 
     @classmethod
     def record_wave_progress(

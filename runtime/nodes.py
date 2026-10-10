@@ -26,9 +26,6 @@ from task_plan.manager import TaskPlanManager
 from task_plan.models import TaskItemStatus
 
 
-GOAL_COMPLETION_REJECTION_COUNT_KEY = "goal_completion_rejection_count"
-GOAL_COMPLETION_CONFLICT_KEY = "goal_completion_unresolved_conflict"
-
 ADMISSION_REASON_PREFIX = "ADMISSION"
 INADMISSIBLE_DECISION_KEY = "inadmissible_decision_count"
 MAX_INADMISSIBLE_DECISIONS = 3
@@ -45,10 +42,9 @@ def _evaluate_goal_completion_claim(
     The Critic owns the semantic judgment. This function only
     refuses a claim that contradicts authoritative runtime state.
 
-    Refusal is bounded. After MAX_GOAL_COMPLETION_REJECTIONS the
-    claim is accepted so the runtime cannot loop forever, and the
-    unresolved conflict is preserved in RuntimeState metadata so
-    the discrepancy is never silent.
+    No acceptance bypass: a claim contradicting authoritative state
+    is always refused. The runtime uses bounded rejection recovery
+    (MAX_INADMISSIBLE_DECISIONS) to prevent infinite loops.
     """
 
     verdict = verify_goal_completion_claim(
@@ -58,33 +54,6 @@ def _evaluate_goal_completion_claim(
     )
 
     if verdict.accepted:
-        return False, []
-
-    runtime_state = state.get("runtime_state")
-
-    rejection_count = 0
-
-    if runtime_state is not None:
-        rejection_count = int(
-            runtime_state.metadata.get(
-                GOAL_COMPLETION_REJECTION_COUNT_KEY,
-                0,
-            )
-        )
-
-    if rejection_count >= MAX_GOAL_COMPLETION_REJECTIONS:
-
-        print(
-            "\n[GOAL COMPLETION GATE] "
-            "Accepting GOAL_COMPLETED after "
-            f"{rejection_count} rejected claims."
-        )
-
-        if runtime_state is not None:
-            runtime_state.metadata[
-                GOAL_COMPLETION_CONFLICT_KEY
-            ] = list(verdict.reasons)
-
         return False, []
 
     print(
@@ -118,6 +87,11 @@ def _recover_from_rejected_goal_completion(
 
     Any other unresolved state requires replanning, because a new
     strategy is needed rather than another identical attempt.
+
+    If the Critic repeatedly claims GOAL_COMPLETED and is rejected,
+    the inadmissible decision budget (MAX_INADMISSIBLE_DECISIONS)
+    will force REPLAN_REQUIRED. If that also exhausts, we terminate
+    with partial completion.
     """
 
     failed_tasks = [
@@ -189,15 +163,6 @@ def _recover_from_rejected_goal_completion(
         target_task_ids=target_task_ids,
     )
 
-    runtime_state.metadata[
-        GOAL_COMPLETION_REJECTION_COUNT_KEY
-    ] = int(
-        runtime_state.metadata.get(
-            GOAL_COMPLETION_REJECTION_COUNT_KEY,
-            0,
-        )
-    ) + 1
-
     # ------------------------------------------------------
     # The reviewed execution boundary must not survive into a
     # new execution or planning cycle. It is preserved when the
@@ -255,8 +220,8 @@ def _inadmissible_decision_recovery(
     The refusal loop is bounded. Each inadmissible decision
     increments RuntimeState metadata. After
     MAX_INADMISSIBLE_DECISIONS consecutive admissions failures
-    the runtime forces a REPLAN_REQUIRED cycle, so a
-    persistently misaddressed decision cannot loop forever.
+    the runtime terminates with partial completion, as the Critic
+    cannot produce an admissible decision.
     """
 
     count = (
@@ -290,8 +255,8 @@ def _inadmissible_decision_recovery(
             rationale=(
                 "The Critic repeatedly produced decisions that "
                 "could not be applied to authoritative runtime "
-                "state. Planning must re-establish a plan the "
-                "Critic can address. "
+                "state. The runtime terminates with partial "
+                "completion. "
                 + " ".join(reasons)
             ),
             evidence=[
@@ -305,16 +270,17 @@ def _inadmissible_decision_recovery(
             target_task_ids=[],
         )
 
-        RuntimeKernel.handle_event(
+        RuntimeKernel.handle_event_with_termination(
             runtime_state=runtime_state,
-            event=RuntimeEvent.REPLAN_REQUIRED,
+            event=RuntimeEvent.BUDGET_EXHAUSTED,
             decision_context=decision_context,
+            termination_reason=RuntimeKernel.TERMINAL_REASON_BUDGET_EXHAUSTED,
         )
 
         print(
             "[DECISION ADMISSION] "
             "Admission budget exhausted. "
-            "Forcing REPLAN_REQUIRED."
+            "Terminating with partial completion."
         )
 
         return {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from state import TerminalState
 from runtime.modes import RuntimeMode
+from runtime.kernel import RuntimeKernel
 from task_plan.models import (
     TaskItemStatus,
     TaskPlanStatus,
@@ -9,6 +10,30 @@ from task_plan.models import (
 from task_executor.models import (
     WorkflowStatus,
 )
+
+
+def validate_workspace_invariance(state: TerminalState) -> None:
+    """
+    Validate I10: Workspace root must remain immutable for the run.
+
+    Called at stable graph boundaries (after planner, after critic, after concurrent execution, before output).
+    Does not validate transient intermediate states.
+    """
+    runtime_state = state.get("runtime_state")
+    if runtime_state is None:
+        return
+
+    metadata = runtime_state.metadata
+    anchored_workspace = metadata.get("workspace_root")
+    current_workspace = state.get("workspace")
+
+    if anchored_workspace is not None and current_workspace is not None:
+        if str(anchored_workspace) != str(current_workspace):
+            raise RuntimeError(
+                "Workspace root changed between steps: "
+                f"anchored='{anchored_workspace}' "
+                f"current='{current_workspace}'"
+            )
 
 
 def validate_runtime_consistency(
@@ -29,33 +54,26 @@ def validate_runtime_consistency(
     metadata = runtime_state.metadata
 
     # I10: Workspace root must remain immutable for the run.
-    anchored_workspace = metadata.get("workspace_root")
-    current_workspace = state.get("workspace")
+    validate_workspace_invariance(state)
 
-    if anchored_workspace is not None and current_workspace is not None:
-        if str(anchored_workspace) != str(current_workspace):
-            raise RuntimeError(
-                "Workspace root changed between steps: "
-                f"anchored='{anchored_workspace}' "
-                f"current='{current_workspace}'"
-            )
-
-    # Also require anchoring if workspace is present? Enforcement is checked;
-    # I10 states workspace immutable per run (anchor set). For strictness,
-    # if workspace appears later with different value and anchored exists, error.
-
-    # FINISHED mode: allow terminal states (Step 9 may add budget_exhausted)
+    # FINISHED mode: allow terminal states with recognized termination reasons
     termination_reason = metadata.get("termination_reason")
 
     if runtime_state.mode == RuntimeMode.FINISHED:
         # Whitelist for termination reasons that may exist in FINISHED
-        allowed_termination = {"budget_exhausted"}
-        if termination_reason is not None and termination_reason not in allowed_termination:
-            pass  # keep existing behavior; if none, current tests expect existing rules
-        # For now, don't block existing tests; just enforce I10
-
-    # ... rest of logic continues exactly as before in effect; we'll just insert I10 check
-    pass
+        # with non-COMPLETED task plan
+        allowed_incomplete_termination = {
+            RuntimeKernel.TERMINAL_REASON_BUDGET_EXHAUSTED,
+            RuntimeKernel.TERMINAL_REASON_GOAL_COMPLETION_REJECTED,
+            RuntimeKernel.TERMINAL_REASON_PARTIAL_COMPLETION,
+        }
+        if termination_reason in allowed_incomplete_termination:
+            # Partial/incomplete termination is valid - skip plan completion check
+            pass
+        elif task_plan.status != TaskPlanStatus.COMPLETED:
+            raise RuntimeError(
+                "Runtime is FINISHED but TaskPlan is not COMPLETED."
+            )
 
     # ----------------------------------------------------------
     # No TaskPlan yet.
@@ -145,12 +163,11 @@ def validate_runtime_consistency(
         )
 
     # ----------------------------------------------------------
-    # FINISHED requires a completed TaskPlan.
+    # FINISHED requires a completed TaskPlan (unless terminated with reason).
     # ----------------------------------------------------------
 
     if runtime_state.mode == RuntimeMode.FINISHED:
 
         if task_plan.status != TaskPlanStatus.COMPLETED:
-            raise RuntimeError(
-                "Runtime is FINISHED but TaskPlan is not COMPLETED."
-            )
+            # Already checked above for allowed incomplete termination
+            pass

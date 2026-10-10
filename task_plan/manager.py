@@ -150,6 +150,9 @@ class TaskPlanManager:
 
         Task lifecycle ownership remains inside TaskPlanManager.
         Only READY tasks may become IN_PROGRESS.
+
+        Increments attempt_count on READY → IN_PROGRESS.
+        Blocks if attempt_count >= max_attempts.
         """
 
         task = TaskPlanManager._find_task(
@@ -164,7 +167,16 @@ class TaskPlanManager:
                 "Only READY tasks may become IN_PROGRESS."
             )
 
+        # Check attempt budget before starting
+        if task.attempt_count >= task.max_attempts:
+            raise ValueError(
+                f"Task '{task_id}' has exhausted its attempt budget "
+                f"({task.attempt_count}/{task.max_attempts}). "
+                "Cannot start further executions."
+            )
+
         task.status = TaskItemStatus.IN_PROGRESS
+        task.attempt_count += 1
 
     @staticmethod
     def find_task(
@@ -220,6 +232,9 @@ class TaskPlanManager:
             READY
                 ↓
             new ExecutionWorkflow
+
+        Does NOT increment attempt_count. The count increments on
+        the next start_task/start_ready_tasks call.
         """
 
         task = TaskPlanManager._find_task(
@@ -234,7 +249,7 @@ class TaskPlanManager:
                 "Only IN_PROGRESS tasks may be retried."
             )
 
-        # Check attempt budget
+        # Check attempt budget (will be enforced on next start)
         if task.attempt_count >= task.max_attempts:
             raise ValueError(
                 f"Task '{task_id}' has exhausted its attempt budget "
@@ -245,7 +260,7 @@ class TaskPlanManager:
         task.status = TaskItemStatus.READY
         task.confirmed = False
         task.evidence.clear()
-        task.attempt_count += 1
+        # attempt_count NOT incremented here; increments on next start
 
     @staticmethod
     def retry_failed_task(
@@ -265,6 +280,9 @@ class TaskPlanManager:
             READY
                 ↓
             new execution wave
+
+        Does NOT increment attempt_count. The count increments on
+        the next start_task/start_ready_tasks call.
         """
 
         task = TaskPlanManager._find_task(
@@ -279,7 +297,7 @@ class TaskPlanManager:
                 "Only FAILED tasks may enter concurrent retry."
             )
 
-        # Check attempt budget
+        # Check attempt budget (will be enforced on next start)
         if task.attempt_count >= task.max_attempts:
             raise ValueError(
                 f"Task '{task_id}' has exhausted its attempt budget "
@@ -291,7 +309,7 @@ class TaskPlanManager:
         task.confirmed = False
         task.evidence.clear()
         task.blockers.clear()
-        task.attempt_count += 1
+        # attempt_count NOT incremented here; increments on next start
 
     @staticmethod
     def retry_completed_task(
@@ -310,6 +328,9 @@ class TaskPlanManager:
             READY
                 ↓
             new execution wave
+
+        Does NOT increment attempt_count. The count increments on
+        the next start_task/start_ready_tasks call.
         """
 
         task = TaskPlanManager._find_task(
@@ -324,7 +345,7 @@ class TaskPlanManager:
                 "Only COMPLETED tasks may enter completed retry."
             )
 
-        # Check attempt budget
+        # Check attempt budget (will be enforced on next start)
         if task.attempt_count >= task.max_attempts:
             raise ValueError(
                 f"Task '{task_id}' has exhausted its attempt budget "
@@ -335,7 +356,7 @@ class TaskPlanManager:
         task.status = TaskItemStatus.READY
         task.confirmed = False
         task.evidence.clear()
-        task.attempt_count += 1
+        # attempt_count NOT incremented here; increments on next start
 
     @staticmethod
     def confirm_task(
@@ -631,13 +652,39 @@ class TaskPlanManager:
 
             if existing_task is not None and proposed_key not in matched_existing:
                 # Match found: preserve existing task with its runtime state
-                # The proposed task may have updated success_criteria, so merge them
-                if proposed_task.success_criteria:
-                    existing_task.success_criteria = proposed_task.success_criteria
-                # Priority can be updated by planner
+                # Runtime-owned fields are NEVER silently overwritten:
+                #   success_criteria, confirmed, evidence, blockers, attempt_count, max_attempts, status
+                #
+                # Planner may update:
+                #   priority (scheduling policy)
+                #   metadata["planner"] namespace (non-conflicting keys)
+                #
+                # Only an explicit contract_revision=True allows success_criteria change,
+                # which resets confirmed=False and clears evidence.
+                # The flag is consumed (not persisted).
+
+                if proposed_task.contract_revision:
+                    # Explicit contract revision: allow success_criteria update
+                    if proposed_task.success_criteria:
+                        existing_task.success_criteria = proposed_task.success_criteria
+                    # Reset confirmation and evidence for revised criteria
+                    existing_task.confirmed = False
+                    existing_task.evidence.clear()
+                    # Consume the flag - do not persist it
+                # else: preserve existing success_criteria, confirmed, evidence exactly
+
+                # Priority can be updated by planner (scheduling policy)
                 existing_task.priority = proposed_task.priority
-                # Metadata can be updated
-                existing_task.metadata.update(proposed_task.metadata)
+
+                # Metadata: merge only non-conflicting planner keys under separate namespace
+                planner_meta = proposed_task.metadata.get("planner", {})
+                if planner_meta:
+                    existing_meta = existing_task.metadata.get("planner", {})
+                    # Only add non-conflicting keys
+                    for k, v in planner_meta.items():
+                        if k not in existing_meta:
+                            existing_meta[k] = v
+                    existing_task.metadata["planner"] = existing_meta
 
                 # Keep existing task in its current status (READY, IN_PROGRESS, etc.)
                 # but ensure it's not COMPLETED
@@ -650,6 +697,8 @@ class TaskPlanManager:
                 # No match: this is genuinely new work
                 new_task = proposed_task.model_copy(deep=True)
                 new_task.status = TaskItemStatus.PENDING
+                new_task.attempt_count = 0  # New tasks start with 0 attempts
+                new_task.max_attempts = 3   # Default max attempts
                 replacement_tasks.append(new_task)
 
         # --------------------------------------------------------------
@@ -721,6 +770,9 @@ class TaskPlanManager:
         The TaskPlanManager remains the sole owner of TaskItem lifecycle
         transitions. The scheduler decides how many tasks may be admitted;
         this manager performs READY -> IN_PROGRESS.
+
+        Increments attempt_count on each started task.
+        Blocks tasks that have exhausted their attempt budget.
         """
 
         if limit < 1:
@@ -733,7 +785,15 @@ class TaskPlanManager:
         selected_tasks = ready_tasks[:limit]
 
         for task in selected_tasks:
+            # Check attempt budget before starting
+            if task.attempt_count >= task.max_attempts:
+                raise ValueError(
+                    f"Task '{task.task_id}' has exhausted its attempt budget "
+                    f"({task.attempt_count}/{task.max_attempts}). "
+                    "Cannot start further executions."
+                )
             task.status = TaskItemStatus.IN_PROGRESS
+            task.attempt_count += 1
 
         return selected_tasks
 
