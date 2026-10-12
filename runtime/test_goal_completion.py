@@ -8,7 +8,7 @@ from runtime.models import (
     RuntimeState,
 )
 from runtime.nodes import (
-    GOAL_COMPLETION_REJECTION_COUNT_KEY,
+    INADMISSIBLE_DECISION_KEY,
     _apply_concurrent_critic_decision,
 )
 
@@ -27,7 +27,7 @@ from task_plan.models import (
 
 def build_state(
     *,
-    rejection_count: int = 0,
+    inadmissible_count: int = 0,
 ) -> dict:
     plan = TaskPlan(
         plan_id="plan-1",
@@ -50,7 +50,7 @@ def build_state(
     runtime_state = RuntimeState(
         mode=RuntimeMode.REVIEWING,
         metadata={
-            GOAL_COMPLETION_REJECTION_COUNT_KEY: rejection_count,
+            INADMISSIBLE_DECISION_KEY: inadmissible_count,
         },
     )
 
@@ -82,11 +82,10 @@ def goal_completion_context() -> RuntimeDecisionContext:
     )
 
 
-@pytest.mark.parametrize("rejection_count", [0, 1])
 def test_failed_task_blocks_goal_completion_and_triggers_retry(
-    rejection_count: int,
+    inadmissible_count: int = 0,
 ):
-    state = build_state(rejection_count=rejection_count)
+    state = build_state(inadmissible_count=inadmissible_count)
 
     result = _apply_concurrent_critic_decision(
         state=state,
@@ -108,14 +107,16 @@ def test_failed_task_blocks_goal_completion_and_triggers_retry(
     )
 
     assert failed_task.status == TaskItemStatus.READY
-    assert (
-        runtime_state.metadata[GOAL_COMPLETION_REJECTION_COUNT_KEY]
-        == rejection_count + 1
-    )
+    # Goal completion rejection follows normal recovery, not inadmissible path
+    assert runtime_state.metadata.get(INADMISSIBLE_DECISION_KEY, 0) == inadmissible_count
 
 
-def test_completion_is_accepted_once_rejection_budget_is_exhausted():
-    state = build_state(rejection_count=2)
+def test_goal_completion_never_accepted_when_contradicts_state():
+    """
+    GOAL_COMPLETED is never accepted if it contradicts authoritative state.
+    No rejection budget bypass exists.
+    """
+    state = build_state(inadmissible_count=0)
 
     result = _apply_concurrent_critic_decision(
         state=state,
@@ -126,9 +127,9 @@ def test_completion_is_accepted_once_rejection_budget_is_exhausted():
 
     runtime_state = result["runtime_state"]
 
-    assert runtime_state.mode == RuntimeMode.FINISHED
-    assert result["critic_rejection"] is None
-    assert runtime_state.metadata["goal_completion_unresolved_conflict"]
+    # Still rejected, still follows recovery
+    assert result["critic_rejection"] is not None
+    assert runtime_state.mode == RuntimeMode.EXECUTING
 
 
 def test_completion_is_accepted_when_the_plan_is_proven_complete():

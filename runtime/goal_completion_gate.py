@@ -5,7 +5,11 @@ from dataclasses import dataclass, field
 from models import ActiveTaskMemory
 
 from runtime.plan_execution_outcome import PlanExecutionOutcome
-from task_plan.models import TaskPlan, TaskPlanStatus
+from task_plan.models import (
+    TaskItemStatus,
+    TaskPlan,
+    TaskPlanStatus,
+)
 
 
 MAX_GOAL_COMPLETION_REJECTIONS = 2
@@ -45,6 +49,8 @@ def verify_goal_completion_claim(
 
         - a planned objective that failed, is blocked, or was
           cancelled,
+        - a criteria-bearing task that completed but was never
+          confirmed by a Critic TASK_COMPLETED decision,
         - a TaskPlan that is not COMPLETED,
         - an execution boundary that produced no successful
           execution result,
@@ -69,6 +75,21 @@ def verify_goal_completion_claim(
             + ". Either these objectives do not affect the user's "
             "goal and that is stated explicitly with evidence, or "
             "recovery is required."
+        )
+
+    unconfirmed = _collect_unconfirmed_tasks(
+        task_plan=task_plan,
+    )
+
+    if unconfirmed:
+        reasons.append(
+            "These completed tasks carry success criteria but have "
+            "never been confirmed by a Critic TASK_COMPLETED "
+            "decision: "
+            + "; ".join(unconfirmed)
+            + ". Emit TASK_COMPLETED targeting each of them with "
+            "affirmative evidence for their criteria, then claim "
+            "GOAL_COMPLETED."
         )
 
     if task_plan.status != TaskPlanStatus.COMPLETED:
@@ -147,6 +168,37 @@ def _collect_unresolved_tasks(
             )
 
     return unresolved
+
+
+def _collect_unconfirmed_tasks(
+    *,
+    task_plan: TaskPlan,
+) -> list[str]:
+    """
+    Describe every completed task with success criteria that the
+    Critic has not explicitly confirmed.
+
+    Confirmation is a Critic decision recorded on the TaskItem.
+    Execution reaching COMPLETED never sets it.
+    """
+
+    unconfirmed: list[str] = []
+
+    for task in task_plan.tasks:
+        if task.status != TaskItemStatus.COMPLETED:
+            continue
+
+        if not task.success_criteria:
+            continue
+
+        if task.confirmed:
+            continue
+
+        unconfirmed.append(
+            f"{task.task_id}: {task.objective}"
+        )
+
+    return unconfirmed
 
 
 def _collect_unresolved_needs(

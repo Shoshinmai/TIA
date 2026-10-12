@@ -9,6 +9,7 @@ from runtime.plan_execution_outcome import PlanExecutionCondition
 
 class OutputType(StrEnum):
     FINAL = "final"
+    PARTIAL_COMPLETION = "partial_completion"
     BLOCKED = "blocked"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -129,6 +130,11 @@ class OutputContext(BaseModel):
 
     decision: OutputDecision | None = None
 
+    termination_reason: str | None = Field(
+        default=None,
+        description="Reason for incomplete termination, if applicable.",
+    )
+
 
 class AgentOutput(BaseModel):
     """
@@ -141,11 +147,21 @@ class AgentOutput(BaseModel):
         min_length=1,
     )
 
+    termination_reason: str | None = Field(
+        default=None,
+        description="Reason for incomplete termination, if applicable.",
+    )
+
 
 OUTPUT_FALLBACK_MESSAGES: dict[OutputType, str] = {
     OutputType.FINAL: (
         "The requested work was completed, "
         "but I could not generate the final summary."
+    ),
+    OutputType.PARTIAL_COMPLETION: (
+        "The work was partially completed. "
+        "Some objectives could not be finished due to budget exhaustion "
+        "or goal completion rejection. See the summary for details."
     ),
     OutputType.BLOCKED: (
         "I could not complete the request because "

@@ -58,6 +58,10 @@ _TRANSITIONS: dict[Transition, RuntimeMode] = {
         RuntimeMode.PLANNING,
         RuntimeEvent.PLAN_CANCELLED,
     ): RuntimeMode.FINISHED,
+    Transition(
+        RuntimeMode.PLANNING,
+        RuntimeEvent.BUDGET_EXHAUSTED,
+    ): RuntimeMode.FINISHED,
     # ================================================================
     # Execution
     # ================================================================
@@ -74,6 +78,16 @@ _TRANSITIONS: dict[Transition, RuntimeMode] = {
         RuntimeMode.EXECUTING,
         RuntimeEvent.PLAN_EXHAUSTED,
     ): RuntimeMode.REVIEWING,
+    # Empty/incomplete wave or budget exhaustion from EXECUTING
+    # must transition to REVIEWING (for Critic) or FINISHED.
+    Transition(
+        RuntimeMode.EXECUTING,
+        RuntimeEvent.TASK_BLOCKED,
+    ): RuntimeMode.REVIEWING,
+    Transition(
+        RuntimeMode.EXECUTING,
+        RuntimeEvent.BUDGET_EXHAUSTED,
+    ): RuntimeMode.FINISHED,
     # ================================================================
     # Review
     # ================================================================
@@ -119,8 +133,13 @@ _TRANSITIONS: dict[Transition, RuntimeMode] = {
     # Whole user goal completed.
     Transition(
         RuntimeMode.REVIEWING,
+        RuntimeEvent.BUDGET_EXHAUSTED,
+    ): RuntimeMode.FINISHED,
+    Transition(
+        RuntimeMode.REVIEWING,
         RuntimeEvent.GOAL_COMPLETED,
     ): RuntimeMode.FINISHED,
+    # ================================================================
     # The current TaskPlan cannot make deterministic progress.
     #
     # Keep the runtime in REVIEWING so the Critic can determine

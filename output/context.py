@@ -14,6 +14,7 @@ from output.models import (
     OutputType,
 )
 from runtime.events import RuntimeEvent
+from runtime.kernel import RuntimeKernel
 from runtime.modes import RuntimeMode
 from runtime.models import RuntimeDecisionContext
 from runtime.plan_execution_outcome import (
@@ -54,6 +55,13 @@ class OutputContextBuilder:
         state: TerminalState,
     ) -> OutputContext:
 
+        runtime_state = state.get("runtime_state")
+        termination_reason = (
+            runtime_state.metadata.get("termination_reason")
+            if runtime_state is not None
+            else None
+        )
+
         return OutputContext(
             goal=cls._build_goal(
                 state,
@@ -77,12 +85,11 @@ class OutputContextBuilder:
                 state,
             ),
             decision=cls._build_decision(
-                state.get(
-                    "runtime_state",
-                ).decision_context
-                if state.get("runtime_state") is not None
+                runtime_state.decision_context
+                if runtime_state is not None
                 else None
             ),
+            termination_reason=termination_reason,
         )
 
     # ==========================================================
@@ -161,6 +168,19 @@ class OutputContextBuilder:
 
         if mode == RuntimeMode.ERROR:
             return OutputType.FAILED
+
+        # ------------------------------------------------------
+        # Budget exhaustion / partial completion.
+        # ------------------------------------------------------
+
+        if runtime_state is not None:
+            termination_reason = runtime_state.metadata.get("termination_reason")
+            if termination_reason in (
+                RuntimeKernel.TERMINAL_REASON_BUDGET_EXHAUSTED,
+                RuntimeKernel.TERMINAL_REASON_GOAL_COMPLETION_REJECTED,
+                RuntimeKernel.TERMINAL_REASON_PARTIAL_COMPLETION,
+            ):
+                return OutputType.PARTIAL_COMPLETION
 
         # ------------------------------------------------------
         # Stable execution outcome.

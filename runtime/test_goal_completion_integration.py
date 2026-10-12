@@ -2,8 +2,12 @@
 
 The deterministic gate is unit-tested on its own. These tests drive the
 Critic's own output through runtime routing and back into the Critic prompt,
-so the reject -> correct -> requeue -> bounded acceptance cycle is exercised
+so the reject -> correct -> requeue cycle is exercised
 as a whole without calling the network.
+
+GOAL_COMPLETED is never accepted if it contradicts authoritative state.
+The runtime uses bounded decision admission (MAX_INADMISSIBLE_DECISIONS)
+to prevent infinite loops, not a goal-completion-specific bypass.
 """
 
 import asyncio
@@ -16,12 +20,12 @@ from critics.models import (
 )
 from nodes import critics as critic_node_module
 from runtime.events import RuntimeEvent
-from runtime.goal_completion_gate import MAX_GOAL_COMPLETION_REJECTIONS
 from runtime.modes import RuntimeMode
 from runtime.models import RuntimeState
 from runtime.nodes import (
-    GOAL_COMPLETION_CONFLICT_KEY,
-    GOAL_COMPLETION_REJECTION_COUNT_KEY,
+    ADMISSION_REASON_PREFIX,
+    INADMISSIBLE_DECISION_KEY,
+    MAX_INADMISSIBLE_DECISIONS,
     runtime_critic_result_node,
 )
 from task_plan.models import (
@@ -81,12 +85,12 @@ def goal_completed_runtime_event():
     )
 
 
-def build_state(rejection_count: int) -> dict:
+def build_state(inadmissible_count: int = 0) -> dict:
     return {
         "runtime_state": RuntimeState(
             mode=RuntimeMode.REVIEWING,
             metadata={
-                GOAL_COMPLETION_REJECTION_COUNT_KEY: rejection_count,
+                INADMISSIBLE_DECISION_KEY: inadmissible_count,
             },
         ),
         "task_plan": build_plan(),
@@ -97,7 +101,7 @@ def build_state(rejection_count: int) -> dict:
 
 
 def test_non_concurrent_completion_is_rejected_and_failed_task_is_requeued():
-    state = build_state(rejection_count=0)
+    state = build_state(inadmissible_count=0)
 
     result = runtime_critic_result_node(state)
 
@@ -115,28 +119,36 @@ def test_non_concurrent_completion_is_rejected_and_failed_task_is_requeued():
     assert failed_task.status == TaskItemStatus.READY
 
     assert runtime_state.mode == RuntimeMode.EXECUTING
-    assert (
-        runtime_state.metadata[GOAL_COMPLETION_REJECTION_COUNT_KEY] == 1
-    )
-    assert GOAL_COMPLETION_CONFLICT_KEY not in runtime_state.metadata
+    # Goal completion rejection follows normal recovery (RETRY_TASK),
+    # not inadmissible decision path. Inadmissible count not incremented.
+    assert runtime_state.metadata.get(INADMISSIBLE_DECISION_KEY, 0) == 0
 
 
-def test_non_concurrent_completion_is_accepted_once_budget_is_exhausted():
-    state = build_state(
-        rejection_count=MAX_GOAL_COMPLETION_REJECTIONS,
-    )
+def test_non_concurrent_completion_is_rejected_and_follows_recovery():
+    """
+    GOAL_COMPLETED is always rejected when it contradicts state.
+    The recovery path (RETRY_TASK for failed tasks) is followed.
+    No acceptance bypass exists.
+    """
+    state = build_state(inadmissible_count=0)
 
     result = runtime_critic_result_node(state)
 
     runtime_state = result["runtime_state"]
 
-    assert result["critic_rejection"] is None
-    assert runtime_state.mode == RuntimeMode.FINISHED
-    assert runtime_state.metadata[GOAL_COMPLETION_CONFLICT_KEY]
-    assert (
-        runtime_state.metadata[GOAL_COMPLETION_REJECTION_COUNT_KEY]
-        == MAX_GOAL_COMPLETION_REJECTIONS
+    # Goal completion was rejected
+    assert result["critic_rejection"] == [PLAN_STATUS_REASON]
+    # Recovery: failed task requeued
+    failed_task = next(
+        task
+        for task in result["task_plan"].tasks
+        if task.task_id == "a2"
     )
+    assert failed_task.status == TaskItemStatus.READY
+    # Runtime transitioned to EXECUTING for retry
+    assert runtime_state.mode == RuntimeMode.EXECUTING
+    # No acceptance bypass - rejection count not used for goal completion
+    assert INADMISSIBLE_DECISION_KEY in runtime_state.metadata
 
 
 class _StubCriticContext:
@@ -227,3 +239,106 @@ def test_rejection_survives_while_the_critic_keeps_claiming_completion(
     assert "GOAL COMPLETION CORRECTION" in prompt
     assert result["critic_rejection"] == REJECTION_REASONS
     assert result["critic_runtime_event"].event == RuntimeEvent.GOAL_COMPLETED
+
+
+def task_completed_runtime_event(target_task_ids: list[str]):
+    return build_critic_runtime_event(
+        CriticOutput(
+            decision=CriticDecision.TASK_COMPLETED,
+            rationale=(
+                "Execution evidence satisfies the task criteria."
+            ),
+            evidence=[
+                CriticEvidence(
+                    source="execution",
+                    observation=(
+                        "The completed workflow output matches "
+                        "every success criterion."
+                    ),
+                )
+            ],
+            target_task_ids=target_task_ids,
+        )
+    )
+
+
+def build_special_case_state(
+    target_task_ids: list[str],
+    *,
+    second_task_confirmed: bool = False,
+) -> dict:
+    """A plan whose tasks are all completed, with no IN_PROGRESS
+    task and no execution boundary: the PLAN_EXHAUSTED review."""
+
+    tasks = [
+        TaskItem(
+            task_id="a1",
+            objective="Identify the core goal",
+            status=TaskItemStatus.COMPLETED,
+            success_criteria=["The core goal is named in the summary"],
+        ),
+        TaskItem(
+            task_id="a2",
+            objective="Persist the discovered knowledge",
+            status=TaskItemStatus.COMPLETED,
+            success_criteria=["The knowledge is recorded in memory"],
+            confirmed=second_task_confirmed,
+        ),
+    ]
+
+    return {
+        "runtime_state": RuntimeState(
+            mode=RuntimeMode.REVIEWING,
+            metadata={
+                INADMISSIBLE_DECISION_KEY: 0,
+            },
+        ),
+        "task_plan": TaskPlan(
+            plan_id="plan-1",
+            goal="explain the repository layout",
+            status=TaskPlanStatus.ACTIVE,
+            tasks=tasks,
+        ),
+        "plan_execution_outcome": None,
+        "execution_workflow": None,
+        "critic_runtime_event": task_completed_runtime_event(
+            target_task_ids,
+        ),
+    }
+
+
+def test_task_completed_with_an_unconfirmed_leftover_stays_in_review():
+    state = build_special_case_state(["a1"])
+
+    result = runtime_critic_result_node(state)
+
+    runtime_state = result["runtime_state"]
+
+    assert runtime_state.mode == RuntimeMode.REVIEWING
+    assert result["task_plan"].status == TaskPlanStatus.COMPLETED
+    assert result["task_plan"].tasks[0].confirmed is True
+    assert result["task_plan"].tasks[1].confirmed is False
+    assert any(
+        "a2" in reason and "never been confirmed" in reason
+        for reason in result["critic_rejection"]
+    )
+    assert result["plan_execution_outcome"] is None
+
+
+def test_goal_completion_is_admitted_once_every_target_is_confirmed():
+    state = build_special_case_state(
+        ["a1", "a2"],
+        second_task_confirmed=False,
+    )
+
+    result = runtime_critic_result_node(state)
+
+    runtime_state = result["runtime_state"]
+
+    assert runtime_state.mode == RuntimeMode.FINISHED
+    assert result["task_plan"].status == TaskPlanStatus.COMPLETED
+    assert all(
+        task.confirmed
+        for task in result["task_plan"].tasks
+    )
+    assert result["critic_rejection"] is None

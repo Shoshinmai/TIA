@@ -111,18 +111,32 @@ def build_critic_context(
 
     if is_plan_exhausted_review:
 
-        return CriticContext(
-            overall_goal=overall_goal,
+        # ------------------------------------------------------
+        # When a preserved execution boundary exists (for example
+        # a completion claim refused for missing confirmations),
+        # show the actual outcome data with its task-attributed
+        # evidence instead of a canned description.
+        # ------------------------------------------------------
 
-            task_plan_summary=task_plan_summary,
-
-            plan_execution_outcome=(
+        if plan_execution_outcome is not None:
+            exhausted_outcome = _format_plan_execution_outcome(
+                plan_execution_outcome,
+            )
+        else:
+            exhausted_outcome = (
                 "PLAN_EXHAUSTED: every task currently contained "
                 "in the rolling TaskPlan has reached COMPLETED. "
                 "This is a deterministic TaskPlan state only. "
                 "It does NOT establish that the user's overall "
                 "goal has been achieved."
-            ),
+            )
+
+        return CriticContext(
+            overall_goal=overall_goal,
+
+            task_plan_summary=task_plan_summary,
+
+            plan_execution_outcome=exhausted_outcome,
 
             current_objective=(
                 "The rolling TaskPlan has been exhausted. "
@@ -767,6 +781,7 @@ def _build_remaining_objectives_for_plan(
             lines.append(
                 f"{index}. "
                 f"[{task.status.value}] "
+                f"[{task.task_id}] "
                 f"{task.objective}"
             )
 
@@ -822,7 +837,7 @@ def _build_remaining_objectives(
         start=1,
     ):
         lines.append(
-            f"{index}. {task.objective}"
+            f"{index}. [{task.task_id}] {task.objective}"
         )
 
     return "\n".join(lines)

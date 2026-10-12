@@ -131,6 +131,7 @@ class OutputGenerator:
         return AgentOutput(
             output_type=context.output_type,
             message=message,
+            termination_reason=context.termination_reason,
         )
 
 

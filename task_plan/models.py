@@ -71,6 +71,57 @@ class TaskItem(BaseModel):
         description="Conditions that indicate this objective has been completed.",
     )
 
+    confirmed: bool = Field(
+        default=False,
+        description=(
+            "Whether the Critic has explicitly confirmed this task's "
+            "success criteria are satisfied. Set only by a Critic "
+            "TASK_COMPLETED decision. Execution alone never sets it."
+        ),
+    )
+
+    evidence: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Task-attributed execution evidence recorded during "
+            "reconciliation: proposal evidence, artifact summaries, "
+            "and worker error information. Bounded per task."
+        ),
+    )
+
+    # Budget tracking for convergence
+    attempt_count: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Number of execution attempts made for this task. "
+            "Incremented on READY → IN_PROGRESS transition. "
+            "NOT incremented on retry (requeue). "
+            "max_attempts=3 allows exactly 3 executions (attempt_count 1, 2, 3)."
+        ),
+    )
+
+    max_attempts: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Maximum allowed execution attempts for this task. "
+            "When attempt_count >= max_attempts, task cannot be started or retried. "
+            "Default 3 means three total executions allowed."
+        ),
+    )
+
+    # PLAN_UPDATE contract revision flag (transient, not persisted)
+    # Set by planner to indicate deliberate success_criteria revision
+    contract_revision: bool = Field(
+        default=False,
+        description=(
+            "Internal flag for PLAN_UPDATE: if true, allows success_criteria "
+            "to be updated and resets confirmed/evidence. Consumed during update, "
+            "not persisted in authoritative state."
+        ),
+    )
+
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Planner/runtime metadata associated with the task.",

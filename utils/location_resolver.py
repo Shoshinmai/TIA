@@ -1,3 +1,6 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 import string
 from pathlib import Path
 
@@ -18,6 +21,44 @@ LOCATION_ALIASES = {
     "working directory": "current directory",
     "current folder": "current directory",
 }
+
+# Context-local workspace for the currently executing worker.
+_WORKSPACE_ROOT: ContextVar[Path | None] = ContextVar(
+    "tia_workspace_root",
+    default=None,
+)
+
+
+def get_workspace_root() -> Path | None:
+    """Return the workspace bound to the current execution context."""
+    return _WORKSPACE_ROOT.get()
+
+@contextmanager
+def workspace_scope(
+    path: str | Path | None,
+) -> Iterator[None]:
+    """Bind a workspace for one worker execution and restore it afterward."""
+    workspace = (
+        Path(path).resolve()
+        if path and str(path) != "workspace:unavailable"
+        else None
+    )
+    token = _WORKSPACE_ROOT.set(workspace)
+    try:
+        yield
+    finally:
+        _WORKSPACE_ROOT.reset(token)
+
+def is_drive_root(path: Path) -> bool:
+    """
+    Check if a path is a Windows drive root (e.g., C:\\, D:\\).
+    """
+    try:
+        resolved = path.resolve()
+        # On Windows, drive roots have no parent beyond the drive letter
+        return len(resolved.parts) == 1 and resolved.drive == str(resolved)
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +148,7 @@ def get_available_drives() -> dict[str, Path]:
 
 def get_search_locations(
     current_directory: Path | None = None,
+    workspace_root: Path | None = None,
 ) -> dict[str, Path]:
     """
     Build the planner-visible location map.
@@ -116,10 +158,17 @@ def get_search_locations(
         current_directory = Path.cwd()
 
     locations = {
-        "workspace": current_directory,
-        "project": current_directory,
         "current directory": current_directory,
     }
+
+    # Use workspace root if provided, otherwise fall back to module-level, then current_directory
+    effective_workspace = (
+        workspace_root
+        if workspace_root is not None
+        else get_workspace_root()
+    ) or current_directory
+    locations["workspace"] = effective_workspace
+    locations["project"] = effective_workspace
 
     locations.update(get_user_locations())
     locations.update(get_available_drives())
@@ -134,6 +183,8 @@ def get_search_locations(
 def resolve_location(
     location: str,
     current_directory: Path | None = None,
+    workspace_root: Path | None = None,
+    allow_drive_root: bool = False,
 ) -> Path:
     """
     Resolve a planner supplied location into a filesystem Path.
@@ -145,7 +196,7 @@ def resolve_location(
     • Relative paths
 
     Raises:
-        ValueError
+        ValueError: If location is a drive root and allow_drive_root is False.
     """
 
     if current_directory is None:
@@ -153,7 +204,13 @@ def resolve_location(
 
     normalized = normalize_location(location)
 
-    locations = get_search_locations(current_directory)
+    # Use explicit workspace_root if provided, otherwise fall back to module-level
+    effective_workspace_root = (
+        workspace_root
+        if workspace_root is not None
+        else get_workspace_root()
+    )
+    locations = get_search_locations(current_directory, effective_workspace_root)
 
     # Planner keywords
     if normalized in locations:
@@ -163,6 +220,13 @@ def resolve_location(
 
     # Absolute path
     if candidate.is_absolute():
+
+        # Gate drive-root searches
+        if not allow_drive_root and is_drive_root(candidate):
+            raise ValueError(
+                f"Drive-root search not allowed: '{location}'. "
+                "Use a specific subdirectory or enable allow_drive_root."
+            )
 
         if candidate.exists():
             return candidate

@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+from pathlib import Path
 
 from langchain_core.tools import tool
 
 from models import GetFileInfoInput, ReadFileInput
-from utils.location_resolver import resolve_location
+from utils.location_resolver import get_workspace_root, resolve_location
 from utils.text_helpers import read_lines
 
 
 def _read_file_sync(
     path: str,
     start_line: int = 1,
+    workspace_root: Path | None = None,
 ) -> dict:
     """
     Synchronous implementation of read_file.
@@ -23,7 +25,7 @@ def _read_file_sync(
     """
 
     try:
-        resolved_path = resolve_location(path)
+        resolved_path = resolve_location(path, workspace_root)
 
     except ValueError as exc:
         return {
@@ -70,21 +72,20 @@ async def read_file(
     """
 
     return await asyncio.to_thread(
-        _read_file_sync,
-        path,
-        start_line,
+        _read_file_sync, path, start_line, get_workspace_root()
     )
 
 
 def _get_file_info_sync(
     path: str,
+    workspace_root: Path | None = None,
 ) -> dict:
     """
     Synchronous implementation of get_file_info.
     """
 
     try:
-        resolved_path = resolve_location(path)
+        resolved_path = resolve_location(path, workspace_root)
 
     except ValueError as exc:
         return {
@@ -112,19 +113,11 @@ def _get_file_info_sync(
     else:
         item_type = "other"
 
-    extension = (
-        resolved_path.suffix
-        if resolved_path.is_file()
-        else None
-    )
+    extension = resolved_path.suffix if resolved_path.is_file() else None
 
-    created_at = datetime.fromtimestamp(
-        stat.st_ctime
-    ).isoformat()
+    created_at = datetime.fromtimestamp(stat.st_ctime).isoformat()
 
-    modified_at = datetime.fromtimestamp(
-        stat.st_mtime
-    ).isoformat()
+    modified_at = datetime.fromtimestamp(stat.st_mtime).isoformat()
 
     return {
         "success": True,
@@ -146,7 +139,4 @@ async def get_file_info(
     Retrieve filesystem metadata asynchronously.
     """
 
-    return await asyncio.to_thread(
-        _get_file_info_sync,
-        path,
-    )
+    return await asyncio.to_thread(_get_file_info_sync, path, get_workspace_root())

@@ -4,6 +4,7 @@ import asyncio
 import json
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from langchain_core.tools import tool
@@ -13,7 +14,10 @@ from models import (
     SearchContentInput,
 )
 from utils.filesystem_helpers import safe_walk
-from utils.location_resolver import resolve_location
+from utils.location_resolver import (
+    get_workspace_root,
+    resolve_location,
+)
 from utils.text_helpers import (
     find_search_backend,
     is_binary_file,
@@ -22,6 +26,23 @@ from utils.text_helpers import (
 
 MAX_RESULTS = 100
 MAX_DIRECTORY_RESULTS = 500
+DEFAULT_MAX_DEPTH = 10
+DEFAULT_TRAVERSAL_TIMEOUT = 30.0  # seconds
+
+
+def _is_drive_root_search(
+    location: str,
+    workspace_root: Path | None = None,
+) -> bool:
+    """Check if the location resolves to a drive root."""
+    try:
+        root_path = resolve_location(
+            location,
+            workspace_root=workspace_root,
+        )
+        return len(root_path.parts) == 1 and root_path.drive == str(root_path)
+    except Exception:
+        return False
 
 
 def _search_files_sync(
@@ -29,13 +50,33 @@ def _search_files_sync(
     location: str = "current directory",
     recursive: bool = True,
     case_sensitive: bool = False,
+    max_depth: int = DEFAULT_MAX_DEPTH,
+    allow_drive_root: bool = False,
+    workspace_root: Path | None = None,
 ) -> dict:
     """
-    Synchronous implementation of search_files.
+    Synchronous implementation of search_files with safety bounds.
     """
 
+    # Gate drive-root searches
+    if _is_drive_root_search(location, workspace_root) and not allow_drive_root:
+        return {
+            "success": False,
+            "query": query,
+            "location": location,
+            "count": 0,
+            "matches": [],
+            "truncated": False,
+            "error": "Drive-root search not allowed. Use a specific subdirectory.",
+            "limit_reached": "drive_root_gate",
+        }
+
     try:
-        root_path = resolve_location(location)
+        root_path = resolve_location(
+            location,
+            allow_drive_root=allow_drive_root,
+            workspace_root=workspace_root,
+        )
 
     except ValueError as exc:
         return {
@@ -49,38 +90,43 @@ def _search_files_sync(
         }
 
     matches = []
+    traversal_start = time.time()
+    timeout_reached = False
 
     try:
-        iterator = (
-            root_path.rglob("*")
-            if recursive
-            else root_path.glob("*")
+        iterator = safe_walk(
+            root=root_path,
+            recursive=recursive,
+            include_hidden=False,
+            max_depth=max_depth if recursive else 1,
+            exclude_patterns=None,  # Uses DEFAULT_EXCLUDE_DIRS
         )
 
-        search_query = (
-            query
-            if case_sensitive
-            else query.lower()
-        )
+        search_query = query if case_sensitive else query.lower()
 
         for path in iterator:
+            # Check traversal timeout
+            if time.time() - traversal_start > DEFAULT_TRAVERSAL_TIMEOUT:
+                timeout_reached = True
+                break
 
             if not path.is_file():
                 continue
 
-            filename = (
-                path.name
-                if case_sensitive
-                else path.name.lower()
-            )
+            filename = path.name if case_sensitive else path.name.lower()
 
             if search_query in filename:
-                matches.append(
-                    str(path.resolve())
-                )
+                matches.append(str(path.resolve()))
 
                 if len(matches) >= MAX_RESULTS:
                     break
+
+        truncated = len(matches) >= MAX_RESULTS or timeout_reached
+        limit_reached = None
+        if len(matches) >= MAX_RESULTS:
+            limit_reached = "max_results"
+        elif timeout_reached:
+            limit_reached = "traversal_timeout"
 
         return {
             "success": True,
@@ -88,7 +134,8 @@ def _search_files_sync(
             "root": str(root_path.resolve()),
             "count": len(matches),
             "matches": matches,
-            "truncated": len(matches) >= MAX_RESULTS,
+            "truncated": truncated,
+            "limit_reached": limit_reached,
         }
 
     except Exception as exc:
@@ -105,9 +152,18 @@ async def search_files(
     location: str = "current directory",
     recursive: bool = True,
     case_sensitive: bool = False,
+    max_depth: int = DEFAULT_MAX_DEPTH,
+    allow_drive_root: bool = False,
 ) -> dict:
     """
     Locate files asynchronously when their exact location is unknown.
+
+    Safety bounds:
+    - max_depth: Maximum recursion depth (default 10)
+    - Traversal timeout: 30 seconds
+    - Default exclusions: .git, node_modules, __pycache__, venv, etc.
+    - Drive-root searches require explicit allow_drive_root=True
+    - Results truncated at 100 matches
     """
 
     return await asyncio.to_thread(
@@ -116,6 +172,9 @@ async def search_files(
         location,
         recursive,
         case_sensitive,
+        max_depth,
+        allow_drive_root,
+        get_workspace_root(),
     )
 
 
@@ -124,13 +183,28 @@ def _list_directory_sync(
     recursive: bool = False,
     include_hidden: bool = False,
     max_depth: int = 2,
+    allow_drive_root: bool = False,
+    workspace_root: Path | None = None,
 ) -> dict:
     """
-    Synchronous implementation of list_directory.
+    Synchronous implementation of list_directory with safety bounds.
     """
 
+    # Gate drive-root searches
+    if _is_drive_root_search(location, workspace_root) and not allow_drive_root:
+        return {
+            "success": False,
+            "location": location,
+            "error": "Drive-root search not allowed. Use a specific subdirectory.",
+            "limit_reached": "drive_root_gate",
+        }
+
     try:
-        root_path = resolve_location(location)
+        root_path = resolve_location(
+            location,
+            allow_drive_root=allow_drive_root,
+            workspace_root=workspace_root,
+        )
 
     except ValueError as exc:
         return {
@@ -144,6 +218,8 @@ def _list_directory_sync(
 
     total_directories = 0
     total_files = 0
+    traversal_start = time.time()
+    timeout_reached = False
 
     for entry in safe_walk(
         root=root_path,
@@ -151,32 +227,30 @@ def _list_directory_sync(
         include_hidden=include_hidden,
         max_depth=max_depth,
     ):
+        # Check traversal timeout
+        if time.time() - traversal_start > DEFAULT_TRAVERSAL_TIMEOUT:
+            timeout_reached = True
+            break
+
         relative = entry.relative_to(root_path)
 
         if entry.is_dir():
-            directories.append(
-                str(relative)
-            )
+            directories.append(str(relative))
             total_directories += 1
 
         else:
-            files.append(
-                str(relative)
-            )
+            files.append(str(relative))
             total_files += 1
 
     truncated = False
+    limit_reached = None
 
     if len(directories) > MAX_DIRECTORY_RESULTS:
-        directories = directories[
-            :MAX_DIRECTORY_RESULTS
-        ]
+        directories = directories[:MAX_DIRECTORY_RESULTS]
         truncated = True
+        limit_reached = "max_results"
 
-    remaining = (
-        MAX_DIRECTORY_RESULTS
-        - len(directories)
-    )
+    remaining = MAX_DIRECTORY_RESULTS - len(directories)
 
     if remaining < 0:
         remaining = 0
@@ -184,6 +258,12 @@ def _list_directory_sync(
     if len(files) > remaining:
         files = files[:remaining]
         truncated = True
+        if limit_reached is None:
+            limit_reached = "max_results"
+
+    if timeout_reached:
+        truncated = True
+        limit_reached = "traversal_timeout"
 
     return {
         "success": True,
@@ -195,6 +275,7 @@ def _list_directory_sync(
         "total_files": total_files,
         "recursive": recursive,
         "truncated": truncated,
+        "limit_reached": limit_reached,
     }
 
 
@@ -204,9 +285,17 @@ async def list_directory(
     recursive: bool = False,
     include_hidden: bool = False,
     max_depth: int = 2,
+    allow_drive_root: bool = False,
 ) -> dict:
     """
     Inspect a directory asynchronously.
+
+    Safety bounds:
+    - max_depth: Maximum recursion depth (default 2)
+    - Traversal timeout: 30 seconds
+    - Default exclusions: .git, node_modules, __pycache__, venv, etc.
+    - Drive-root searches require explicit allow_drive_root=True
+    - Results truncated at 500 entries
     """
 
     return await asyncio.to_thread(
@@ -215,6 +304,8 @@ async def list_directory(
         recursive,
         include_hidden,
         max_depth,
+        allow_drive_root,
+        get_workspace_root(),
     )
 
 
@@ -224,17 +315,34 @@ def _search_content_sync(
     file_pattern: str = "*",
     case_sensitive: bool = False,
     max_results: int = 50,
+    max_depth: int = DEFAULT_MAX_DEPTH,
+    allow_drive_root: bool = False,
+    workspace_root: Path | None = None,
 ) -> dict:
     """
-    Synchronous implementation of search_content.
+    Synchronous implementation of search_content with safety bounds.
 
     Both the Python filesystem backend and the ripgrep backend
     remain unchanged. The entire operation is moved out of the
     event loop by the async wrapper.
     """
 
+    # Gate drive-root searches
+    if _is_drive_root_search(location, workspace_root) and not allow_drive_root:
+        return {
+            "success": False,
+            "query": query,
+            "location": location,
+            "error": "Drive-root search not allowed. Use a specific subdirectory.",
+            "limit_reached": "drive_root_gate",
+        }
+
     try:
-        root_path = resolve_location(location)
+        root_path = resolve_location(
+            location,
+            allow_drive_root=allow_drive_root,
+            workspace_root=workspace_root,
+        )
 
     except ValueError as exc:
         return {
@@ -261,6 +369,7 @@ def _search_content_sync(
         file_pattern=file_pattern,
         case_sensitive=case_sensitive,
         max_results=max_results,
+        max_depth=max_depth,
     )
 
 
@@ -271,9 +380,18 @@ async def search_content(
     file_pattern: str = "*",
     case_sensitive: bool = False,
     max_results: int = 50,
+    max_depth: int = DEFAULT_MAX_DEPTH,
+    allow_drive_root: bool = False,
 ) -> dict:
     """
     Search file contents asynchronously.
+
+    Safety bounds:
+    - max_depth: Maximum recursion depth (default 10)
+    - Traversal timeout: 30 seconds (for Python backend)
+    - Default exclusions: .git, node_modules, __pycache__, venv, etc.
+    - Drive-root searches require explicit allow_drive_root=True
+    - Results truncated at max_results
     """
 
     return await asyncio.to_thread(
@@ -283,6 +401,9 @@ async def search_content(
         file_pattern,
         case_sensitive,
         max_results,
+        max_depth,
+        allow_drive_root,
+        get_workspace_root(),
     )
 
 
@@ -300,10 +421,7 @@ def _search_with_ripgrep(
             "query": query,
             "backend": "ripgrep",
             "root": str(root),
-            "error": (
-                "Ripgrep is not installed or "
-                "is not available on PATH."
-            ),
+            "error": ("Ripgrep is not installed or " "is not available on PATH."),
         }
 
     command = [
@@ -353,6 +471,7 @@ def _search_with_ripgrep(
             "query": query,
             "backend": "ripgrep",
             "error": "Search timed out.",
+            "limit_reached": "subprocess_timeout",
         }
 
     except Exception as exc:
@@ -363,10 +482,7 @@ def _search_with_ripgrep(
             "error": str(exc),
         }
 
-    if (
-        result.returncode not in (0, 1)
-        or result.stderr.strip()
-    ):
+    if result.returncode not in (0, 1) or result.stderr.strip():
         return {
             "success": False,
             "query": query,
@@ -374,10 +490,7 @@ def _search_with_ripgrep(
             "root": str(root),
             "error": (
                 result.stderr.strip()
-                or (
-                    "Ripgrep failed with return code "
-                    f"{result.returncode}."
-                )
+                or ("Ripgrep failed with return code " f"{result.returncode}.")
             ),
         }
 
@@ -451,6 +564,8 @@ def _search_with_ripgrep(
             }
         )
 
+    limit_reached = "max_results" if truncated else None
+
     return {
         "success": True,
         "query": query,
@@ -459,6 +574,7 @@ def _search_with_ripgrep(
         "count": len(matches),
         "matches": matches,
         "truncated": truncated,
+        "limit_reached": limit_reached,
     }
 
 
@@ -468,24 +584,28 @@ def _search_with_python(
     file_pattern: str,
     case_sensitive: bool,
     max_results: int,
+    max_depth: int = DEFAULT_MAX_DEPTH,
 ) -> dict:
 
     matches = []
     truncated = False
+    timeout_reached = False
+    traversal_start = time.time()
 
-    search_query = (
-        query
-        if case_sensitive
-        else query.lower()
-    )
+    search_query = query if case_sensitive else query.lower()
 
     try:
         for path in safe_walk(
             root=root,
             recursive=True,
             include_hidden=False,
-            max_depth=None,
+            max_depth=max_depth,
         ):
+            # Check traversal timeout
+            if time.time() - traversal_start > DEFAULT_TRAVERSAL_TIMEOUT:
+                timeout_reached = True
+                break
+
             if not path.is_file():
                 continue
 
@@ -506,40 +626,23 @@ def _search_with_python(
                         file,
                         start=1,
                     ):
-                        searchable_line = (
-                            line
-                            if case_sensitive
-                            else line.lower()
-                        )
+                        searchable_line = line if case_sensitive else line.lower()
 
-                        if (
-                            search_query
-                            not in searchable_line
-                        ):
+                        if search_query not in searchable_line:
                             continue
 
-                        if (
-                            len(matches)
-                            >= max_results
-                        ):
+                        if len(matches) >= max_results:
                             truncated = True
                             break
 
-                        column = (
-                            searchable_line.find(
-                                search_query
-                            )
-                            + 1
-                        )
+                        column = searchable_line.find(search_query) + 1
 
                         matches.append(
                             {
                                 "file": str(path),
                                 "line": line_number,
                                 "column": column,
-                                "snippet": line.rstrip(
-                                    "\r\n"
-                                ),
+                                "snippet": line.rstrip("\r\n"),
                             }
                         )
 
@@ -562,6 +665,12 @@ def _search_with_python(
             "error": str(exc),
         }
 
+    limit_reached = None
+    if truncated:
+        limit_reached = "max_results"
+    elif timeout_reached:
+        limit_reached = "traversal_timeout"
+
     return {
         "success": True,
         "query": query,
@@ -569,5 +678,6 @@ def _search_with_python(
         "root": str(root),
         "count": len(matches),
         "matches": matches,
-        "truncated": truncated,
+        "truncated": truncated or timeout_reached,
+        "limit_reached": limit_reached,
     }

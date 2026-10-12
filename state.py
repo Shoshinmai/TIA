@@ -62,6 +62,8 @@ class TerminalState(TypedDict):
     
     agent_output: AgentOutput | None
 
+    workspace: str | None
+    
     # ==========================================================
     # GRAPH / TOOL PROTOCOL
     # ==========================================================

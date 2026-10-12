@@ -6,7 +6,16 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from models import ExecutionAttempt
+try:
+    from models import ExecutionAttempt
+except Exception:
+    # Import from project root (handles subpackage import contexts)
+    import sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from models import ExecutionAttempt  # noqa: F401
 from result_processing.models import (
     RuntimeProcessingResult,
 )

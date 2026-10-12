@@ -133,6 +133,25 @@ class PlannerTask(BaseModel):
         ),
     )
 
+    success_criteria: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Observable, evidence-checkable conditions that must hold "
+            "for this objective to be considered satisfied. The Runtime "
+            "tracks these mechanically; the Critic adjudicates them."
+        ),
+    )
+
+    contract_revision: bool = Field(
+        default=False,
+        description=(
+            "Explicit flag indicating this task's success criteria have been "
+            "deliberately revised. If true, the existing task's success_criteria "
+            "will be replaced, and confirmed/evidence will be reset. The flag "
+            "is consumed during update and not persisted."
+        ),
+    )
+
 
 class TaskPlanningOutput(BaseModel):
     """

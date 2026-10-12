@@ -148,6 +148,10 @@ class ExecutionContext(BaseModel):
     - completed dependencies
     - execution constraints
     """
+    workspace: str | Any
+    """
+    Root path of the current workspace.
+    """
 
     objective: str
     """

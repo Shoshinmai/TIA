@@ -120,4 +120,5 @@ class TaskPlanMaterializer:
             objective=planner_task.objective,
             priority=priority,
             dependencies=runtime_dependencies,
+            success_criteria=list(planner_task.success_criteria),
         )

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from langsmith import traceable
+
 from models import (
     ActiveTaskMemory,
     ArtifactReference,
@@ -26,9 +28,12 @@ from utils.tool_prompt_builder import (
     build_capability_prompt,
 )
 
-
+@traceable(
+        name = "build_execution_context",
+        run_type="chain",
+)
 def build_execution_context(
-    state: dict[str, Any],
+    state: dict[str, Any] | TerminalState,
 ) -> ExecutionContext:
     """
     Build the structured context consumed by the Task Executor.
@@ -98,6 +103,7 @@ def build_execution_context(
             task_plan=task_plan,
             task=current_task,
         ),
+        workspace=state.get("workspace"),
         objective=current_task.objective,
         decision_context=_build_decision_context(
             state,
@@ -122,7 +128,7 @@ def build_execution_context(
 
 def build_execution_context_for_task(
     *,
-    state: dict[str, Any],
+    state: dict[str, Any] | TerminalState,
     task: TaskItem,
 ) -> ExecutionContext:
     """
@@ -146,6 +152,7 @@ def build_execution_context_for_task(
             task_plan=task_plan,
             task=task,
         ),
+        workspace=state.get("workspace"),
         objective=task.objective,
         decision_context=_build_decision_context(
             state,
@@ -252,14 +259,12 @@ def _build_filesystem_path_guidance(
     returned by discovery tools.
     """
 
-    current_directory = state.get(
-        "current_directory",
-    )
+    workspace = state.get("workspace")
 
-    if current_directory:
+    if workspace and workspace != "workspace:unavailable":
         return (
             "Filesystem path rules:\n"
-            f"- Project working directory: {current_directory}\n"
+            f"- Project working directory: {workspace}\n"
             "- Discovery tools may return paths relative to the "
             "location that was inspected.\n"
             "- When using such a result in a later capability, "
@@ -277,6 +282,7 @@ def _build_filesystem_path_guidance(
 
     return (
         "Filesystem path rules:\n"
+        "- Workspace root is unavailable. All paths must be absolute.\n"
         "- Discovery results may be relative to the location "
         "that was inspected.\n"
         "- Preserve the inspected directory prefix when using "

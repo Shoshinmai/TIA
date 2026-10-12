@@ -9,7 +9,7 @@ from utils.memory_formatter import (
 
 
 def build_planner_context(
-    state: dict[str, Any],
+    state: dict[str, Any] | TerminalState,
 ) -> dict[str, Any]:
     """
     Build the complete context consumed by the strategic planner.
@@ -27,6 +27,7 @@ def build_planner_context(
         "task_plan": _build_task_plan(state),
         "execution_summary": _build_execution_summary(state),
         "decision_context": _build_decision_context(state),
+        "workspace": state.get("workspace"),
     }
 
 
