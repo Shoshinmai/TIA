@@ -60,6 +60,8 @@ class RuntimeEvent(StrEnum):
     REPLAN_REQUIRED = "replan_required"
     GOAL_COMPLETED = "goal_completed"
 
+    AGENTIC_LOOP_FINISHED = "agentic_loop_finished"
+
     BUDGET_EXHAUSTED = "budget_exhausted"
 
 

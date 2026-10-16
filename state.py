@@ -62,6 +62,12 @@ class TerminalState(TypedDict):
     
     agent_output: AgentOutput | None
 
+    agentic_loop_decision: dict | None
+
+    agentic_loop_history: list[dict]
+
+    agentic_loop_observation: str | None
+
     workspace: str | None
     
     # ==========================================================

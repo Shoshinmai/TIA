@@ -62,6 +62,10 @@ _TRANSITIONS: dict[Transition, RuntimeMode] = {
         RuntimeMode.PLANNING,
         RuntimeEvent.BUDGET_EXHAUSTED,
     ): RuntimeMode.FINISHED,
+    Transition(
+        RuntimeMode.PLANNING,
+        RuntimeEvent.AGENTIC_LOOP_FINISHED,
+    ): RuntimeMode.FINISHED,
     # ================================================================
     # Execution
     # ================================================================
@@ -87,6 +91,10 @@ _TRANSITIONS: dict[Transition, RuntimeMode] = {
     Transition(
         RuntimeMode.EXECUTING,
         RuntimeEvent.BUDGET_EXHAUSTED,
+    ): RuntimeMode.FINISHED,
+    Transition(
+        RuntimeMode.EXECUTING,
+        RuntimeEvent.AGENTIC_LOOP_FINISHED,
     ): RuntimeMode.FINISHED,
     # ================================================================
     # Review
@@ -134,6 +142,10 @@ _TRANSITIONS: dict[Transition, RuntimeMode] = {
     Transition(
         RuntimeMode.REVIEWING,
         RuntimeEvent.BUDGET_EXHAUSTED,
+    ): RuntimeMode.FINISHED,
+    Transition(
+        RuntimeMode.REVIEWING,
+        RuntimeEvent.AGENTIC_LOOP_FINISHED,
     ): RuntimeMode.FINISHED,
     Transition(
         RuntimeMode.REVIEWING,

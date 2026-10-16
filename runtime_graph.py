@@ -3,6 +3,8 @@ from __future__ import annotations
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
+from agentic_loop import agentic_loop_node, agentic_loop_router, after_critic_router
+
 from nodes.critics import (
     terminal_critic_node,
 )
@@ -136,6 +138,11 @@ builder.add_node(
 )
 
 builder.add_node(
+    "agentic_loop",
+    agentic_loop_node,
+)
+
+builder.add_node(
     "planner",
     terminal_planner_node,
 )
@@ -256,10 +263,21 @@ builder.add_edge(
     "runtime_initialization",
 )
 
-builder.add_conditional_edges(
+builder.add_edge(
     "runtime_initialization",
-    runtime_stage_router,
-    runtime_stage_mapping(),
+    "agentic_loop",
+)
+
+builder.add_conditional_edges(
+    "agentic_loop",
+    agentic_loop_router,
+    {
+        "agentic_loop": "agentic_loop",
+        "planner": "planner",
+        "concurrent_execution": "concurrent_execution",
+        "finish": END,
+        "ask_user": END,
+    },
 )
 
 
@@ -336,8 +354,11 @@ builder.add_edge(
 
 builder.add_conditional_edges(
     "runtime_critic",
-    runtime_stage_router,
-    runtime_stage_mapping(),
+    after_critic_router,
+    {
+        "agentic_loop": "agentic_loop",
+        "output_consistency": "output_consistency",
+    },
 )
 
 
