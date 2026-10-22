@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from enum import StrEnum
@@ -11,48 +10,52 @@ class AgenticLoopAction(StrEnum):
     """Actions the agent can select during an iteration."""
 
     CAPABILITY = "CAPABILITY"
+    CONSULT_CRITIC = "CONSULT_CRITIC"
     COMPLEX_EXECUTION = "COMPLEX_EXECUTION"
     FINISH = "FINISH"
     CLARIFICATION = "CLARIFICATION"
 
 
 class AgenticLoopDecision(BaseModel):
-    """
-    Structured decision made by the autonomous problem-solving agent.
-
-    This model describes the next action only. It does not execute
-    capabilities, perform complex work, or certify goal completion.
-
-    Action validation checks the fields essential to each action.
-    The caller must dispatch on ``action`` and use only the fields
-    relevant to that action.
-    """
+    """Structured next-action decision made by the main agent."""
 
     action: AgenticLoopAction = Field(
         description="The single action selected for this iteration.",
     )
-
     rationale: str = Field(
         min_length=1,
-        description=(
-            "Why this action is appropriate given the goal, current "
-            "context, and observations."
-        ),
+        description="Why this action is appropriate.",
     )
 
     capability_name: str | None = Field(
         default=None,
-        description=(
-            "Exact name of an available capability. Required when "
-            "action is CAPABILITY."
-        ),
+        description="Exact registered capability name for CAPABILITY.",
     )
-
     arguments: dict[str, Any] = Field(
         default_factory=dict,
+        description="Arguments for the selected capability.",
+    )
+
+    critic_question: str | None = Field(
+        default=None,
         description=(
-            "Arguments for the selected capability, matching its "
-            "input schema. Used only for CAPABILITY."
+            "Specific question to ask the advisory critic. Required "
+            "when action is CONSULT_CRITIC."
+        ),
+    )
+    critic_observation_sequences: list[int] = Field(
+        default_factory=list,
+        max_length=10,
+        description=(
+            "Sequence numbers of observations relevant to the critic "
+            "question. Leave empty to include the recent observations."
+        ),
+    )
+    critic_proposed_approach: str | None = Field(
+        default=None,
+        max_length=2_000,
+        description=(
+            "Optional approach the main agent wants the critic to assess."
         ),
     )
 
@@ -60,54 +63,59 @@ class AgenticLoopDecision(BaseModel):
         default=None,
         description=(
             "Grounded user-facing outcome when action is FINISH. "
-            "May describe complete, partial, blocked, or inconclusive work."
+            "It may describe complete, partial, blocked, or inconclusive work."
         ),
     )
-
     clarification_question: str | None = Field(
         default=None,
         description=(
-            "One clear question requesting essential missing "
-            "information when action is CLARIFICATION."
+            "One clear question requesting essential missing information."
         ),
     )
-
     completion_evidence: list[str] = Field(
         default_factory=list,
-        description=(
-            "Evidence supporting any completion claim. An empty list "
-            "is valid when the outcome is incomplete or inconclusive."
-        ),
+        description="Evidence supporting any completion claim.",
     )
 
     @model_validator(mode="after")
     def validate_required_action_fields(self) -> Self:
-        """Validate fields required to execute the selected action."""
-
         if not self.rationale.strip():
             raise ValueError("rationale must not be empty.")
 
         if self.action == AgenticLoopAction.CAPABILITY:
-            if (
-                self.capability_name is None
-                or not self.capability_name.strip()
-            ):
+            if not self.capability_name or not self.capability_name.strip():
                 raise ValueError(
                     "CAPABILITY requires a non-empty capability_name."
                 )
 
-        elif self.action == AgenticLoopAction.FINISH:
-            if (
-                self.final_response is None
-                or not self.final_response.strip()
+        elif self.action == AgenticLoopAction.CONSULT_CRITIC:
+            if not self.critic_question or not self.critic_question.strip():
+                raise ValueError(
+                    "CONSULT_CRITIC requires a non-empty critic_question."
+                )
+
+            if any(
+                sequence < 1
+                for sequence in self.critic_observation_sequences
             ):
+                raise ValueError(
+                    "critic_observation_sequences must contain "
+                    "positive sequence numbers."
+                )
+
+            if self.critic_proposed_approach is not None:
+                if not self.critic_proposed_approach.strip():
+                    self.critic_proposed_approach = None
+
+        elif self.action == AgenticLoopAction.FINISH:
+            if not self.final_response or not self.final_response.strip():
                 raise ValueError(
                     "FINISH requires a non-empty final_response."
                 )
 
         elif self.action == AgenticLoopAction.CLARIFICATION:
             if (
-                self.clarification_question is None
+                not self.clarification_question
                 or not self.clarification_question.strip()
             ):
                 raise ValueError(
@@ -129,83 +137,30 @@ class AgenticLoopStatus(StrEnum):
 
 
 class AgenticLoopResult(BaseModel):
-    """
-    Result returned when one standalone loop invocation stops.
+    """Result returned when one standalone loop invocation stops."""
 
-    FINISHED means the loop selected FINISH and has a user-facing
-    outcome to report. It does not independently certify that the
-    user's overall goal was achieved.
-    """
+    status: AgenticLoopStatus
+    decisions_made: int = Field(default=0, ge=0)
+    critic_responses_received: int = Field(default=0, ge=0)
 
-    status: AgenticLoopStatus = Field(
-        description="Why the loop invocation stopped.",
-    )
-
-    decisions_made: int = Field(
-        default=0,
-        ge=0,
-        description=(
-            "Number of agent decisions made during this invocation."
-        ),
-    )
-
-    final_response: str | None = Field(
-        default=None,
-        description=(
-            "User-facing outcome, when available. May describe "
-            "partial or incomplete work."
-        ),
-    )
-
-    clarification_question: str | None = Field(
-        default=None,
-        description=(
-            "Question to return to the user when clarification is required."
-        ),
-    )
-
-    rationale: str | None = Field(
-        default=None,
-        description="Explanation of the stopping decision.",
-    )
-
-    completion_evidence: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Evidence collected to support any reported completion."
-        ),
-    )
-
-    observations: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Observed capability results accumulated during the loop."
-        ),
-    )
-
-    error: str | None = Field(
-        default=None,
-        description=(
-            "Error information when execution or decision processing fails."
-        ),
-    )
+    final_response: str | None = None
+    clarification_question: str | None = None
+    rationale: str | None = None
+    completion_evidence: list[str] = Field(default_factory=list)
+    observations: list[str] = Field(default_factory=list)
+    error: str | None = None
 
     @model_validator(mode="after")
     def validate_status_contract(self) -> Self:
-        """Ensure the result contains information required by its status."""
-
         if self.status == AgenticLoopStatus.FINISHED:
-            if (
-                self.final_response is None
-                or not self.final_response.strip()
-            ):
+            if not self.final_response or not self.final_response.strip():
                 raise ValueError(
                     "FINISHED requires a non-empty final_response."
                 )
 
         elif self.status == AgenticLoopStatus.CLARIFICATION_REQUIRED:
             if (
-                self.clarification_question is None
+                not self.clarification_question
                 or not self.clarification_question.strip()
             ):
                 raise ValueError(
@@ -214,9 +169,7 @@ class AgenticLoopResult(BaseModel):
                 )
 
         elif self.status == AgenticLoopStatus.FAILED:
-            if self.error is None or not self.error.strip():
-                raise ValueError(
-                    "FAILED requires a non-empty error."
-                )
+            if not self.error or not self.error.strip():
+                raise ValueError("FAILED requires a non-empty error.")
 
         return self

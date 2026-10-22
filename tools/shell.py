@@ -1,6 +1,7 @@
 from langchain_core.tools import tool
 
 from tools.command_runner import run_command
+from utils.location_resolver import get_workspace_root
 
 
 @tool
@@ -38,7 +39,7 @@ async def run_terminal(command: str) -> dict:
         return_code
     """
 
-    result = await run_command(command)
+    result = await run_command(command, working_directory=get_workspace_root(),)
 
     return_code = result.get(
         "return_code",
