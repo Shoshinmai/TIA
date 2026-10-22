@@ -56,6 +56,7 @@ class TerminalState(TypedDict):
     agentic_loop_decision: AgenticLoopDecision | None
     agentic_loop_observations: list[ObservationRecord]
     agentic_loop_critic_state: CriticConsultationState
+    agentic_loop_critic_active: bool
     agentic_loop_recent_actions: list[str]
     agentic_loop_decisions_made: int
     agentic_loop_critic_responses_received: int

@@ -1,0 +1,431 @@
+
+from __future__ import annotations
+
+import json
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any
+
+from llm.llmclient import call_nvidia
+from prompts.agentic_loop_critic_prompt import AGENTIC_LOOP_CRITIC_PROMPT
+from prompts.agentic_loop_prompt import AGENTIC_LOOP_PROMPT
+from runtime.agentic_loop_context import (
+    MAX_OBSERVATION_COUNT,
+    build_agentic_loop_context,
+)
+from runtime.agentic_loop_critic_models import (
+    CriticAdvice,
+    CriticConsultationRequest,
+    CriticConsultationState,
+    CriticConsultationStatus,
+    CriticDialogueContext,
+    CriticDialogueTurn,
+    DialogueSpeaker,
+    ObservationRecord,
+    ObservationSource,
+    MAX_DIALOGUE_SUMMARY_CHARS,
+    MAX_DIALOGUE_TURN_CHARS,
+)
+from runtime.agentic_loop_critic_policy import CriticInvocationPolicy
+from runtime.agentic_loop_models import (
+    AgenticLoopAction,
+    AgenticLoopDecision,
+)
+from tools import TOOLS
+
+
+DEFAULT_AGENTIC_LOOP_MODEL = "nvidia/nemotron-3-super-120b-a12b"
+DEFAULT_AGENTIC_LOOP_CRITIC_MODEL = DEFAULT_AGENTIC_LOOP_MODEL
+
+_OBSERVATION_TRUNCATION_MARKER = "\n...[observation truncated]"
+_DIALOGUE_TRUNCATION_MARKER = "\n...[earlier dialogue truncated]"
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityStep:
+    observation: ObservationRecord
+    action_summary: str
+
+
+@dataclass(frozen=True, slots=True)
+class CriticStep:
+    state: CriticConsultationState
+    feedback: str
+    response_received: bool
+    consultation_active: bool
+
+
+def bound_observation(observation: Any) -> str:
+    """Convert an observation to bounded text for storage and prompt use."""
+    rendered = (
+        observation if isinstance(observation, str) else str(observation)
+    ).strip()
+
+    from runtime.agentic_loop_context import MAX_OBSERVATION_CHARS
+
+    if len(rendered) <= MAX_OBSERVATION_CHARS:
+        return rendered or "(empty observation)"
+
+    available = max(
+        0,
+        MAX_OBSERVATION_CHARS - len(_OBSERVATION_TRUNCATION_MARKER),
+    )
+    return rendered[:available] + _OBSERVATION_TRUNCATION_MARKER
+
+
+def format_capability_observation(
+    *,
+    capability_name: str,
+    result: Any,
+) -> str:
+    """Format an actual capability result without semantic interpretation."""
+    if isinstance(result, str):
+        rendered_result = result
+    else:
+        try:
+            rendered_result = json.dumps(
+                result,
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+        except (TypeError, ValueError):
+            rendered_result = str(result)
+
+    return (
+        f"Capability: {capability_name}\n"
+        f"Returned result:\n{rendered_result}"
+    )
+
+
+def format_critic_advice(advice: CriticAdvice) -> str:
+    parts = [f"Advice: {advice.advice}"]
+
+    if advice.uncertainty:
+        parts.append(f"Uncertainty: {advice.uncertainty}")
+
+    if advice.follow_up_question:
+        parts.append(f"Follow-up question: {advice.follow_up_question}")
+
+    return "\n".join(parts)
+
+
+def render_critic_feedback(state: CriticConsultationState) -> str:
+    """Render bounded dialogue separately from factual observations."""
+    sections: list[str] = []
+
+    if state.dialogue_summary:
+        sections.extend(
+            ["Earlier consultation summary:", state.dialogue_summary]
+        )
+
+    if state.recent_exchange:
+        sections.append("Most recent exchange:")
+        for turn in state.recent_exchange:
+            sections.append(f"{turn.speaker.value}: {turn.content}")
+
+    return "\n".join(sections) or "No critic advice has been received."
+
+
+def append_dialogue_summary(previous: str, exchange: str) -> str:
+    """Append an exchange while keeping the summary within its contract."""
+    combined = "\n\n".join(
+        part for part in (previous.strip(), exchange.strip()) if part
+    )
+
+    if len(combined) <= MAX_DIALOGUE_SUMMARY_CHARS:
+        return combined
+
+    marker = _DIALOGUE_TRUNCATION_MARKER
+    available = MAX_DIALOGUE_SUMMARY_CHARS - len(marker)
+    return marker + combined[-available:]
+
+
+def bound_dialogue_turn(content: str) -> str:
+    """Bound one dialogue turn to the model's configured field limit."""
+    if len(content) <= MAX_DIALOGUE_TURN_CHARS:
+        return content or "(empty dialogue turn)"
+
+    marker = "\n...[dialogue turn truncated]"
+    available = max(0, MAX_DIALOGUE_TURN_CHARS - len(marker))
+    return content[:available] + marker
+
+
+async def decide_next_action(
+    state: Mapping[str, Any],
+    *,
+    observations: Sequence[str],
+    capabilities: Sequence[Any] | None = None,
+    goal: str | None = None,
+    critic_feedback: str = "No critic consultation has been requested.",
+    model: str = DEFAULT_AGENTIC_LOOP_MODEL,
+) -> AgenticLoopDecision:
+    """Build bounded context and obtain exactly one structured decision."""
+    available_capabilities = list(
+        TOOLS if capabilities is None else capabilities
+    )
+
+    context = build_agentic_loop_context(
+        state=state,
+        observations=observations,
+        capabilities=available_capabilities,
+        goal=goal,
+    )
+    prompt = AGENTIC_LOOP_PROMPT.format(
+        **context.model_dump(),
+        critic_feedback=critic_feedback,
+    )
+
+    decision = await call_nvidia(
+        prompt=prompt,
+        model=model,
+        subagent=True,
+        state_model=AgenticLoopDecision,
+    )
+
+    if not isinstance(decision, AgenticLoopDecision):
+        raise TypeError(
+            "The LLM client returned an unexpected decision type: "
+            f"{type(decision).__name__}."
+        )
+
+    return decision
+
+
+async def execute_selected_capability(
+    decision: AgenticLoopDecision,
+    *,
+    capabilities: Sequence[Any] | None = None,
+    sequence: int,
+) -> CapabilityStep:
+    """Execute one capability and return its factual observation.
+
+    Unknown capabilities and execution exceptions become observations rather
+    than escaping as exceptions. This matches the standalone runner contract.
+    """
+    if decision.action != AgenticLoopAction.CAPABILITY:
+        raise ValueError(
+            "execute_selected_capability requires a CAPABILITY decision."
+        )
+
+    available_capabilities = list(
+        TOOLS if capabilities is None else capabilities
+    )
+    capability_name = decision.capability_name or ""
+    capability_map = {
+        capability.name: capability
+        for capability in available_capabilities
+        if isinstance(getattr(capability, "name", None), str)
+        and capability.name.strip()
+    }
+    capability = capability_map.get(capability_name)
+
+    if capability is None:
+        content = (
+            "Capability execution was not attempted: "
+            f"{capability_name!r} is not in the registered "
+            "capability set for this invocation."
+        )
+        source = ObservationSource.RUNTIME
+        source_name = "capability_dispatch"
+        action_summary = f"CAPABILITY unavailable: {capability_name}"
+    else:
+        try:
+            result = await capability.ainvoke(decision.arguments)
+            content = format_capability_observation(
+                capability_name=capability_name,
+                result=result,
+            )
+            source = ObservationSource.CAPABILITY
+            source_name = capability_name
+            action_summary = f"CAPABILITY executed: {capability_name}"
+        except Exception as exc:
+            content = (
+                f"Capability: {capability_name}\n"
+                f"Execution error: {type(exc).__name__}: {exc}"
+            )
+            source = ObservationSource.CAPABILITY
+            source_name = capability_name
+            action_summary = f"CAPABILITY failed: {capability_name}"
+
+    return CapabilityStep(
+        observation=ObservationRecord(
+            sequence=sequence,
+            source=source,
+            source_name=source_name[:200],
+            content=bound_observation(content),
+        ),
+        action_summary=action_summary[:2_000],
+    )
+
+
+async def consult_critic_once(
+    decision: AgenticLoopDecision,
+    *,
+    goal: str,
+    observations: Sequence[ObservationRecord],
+    recent_actions: Sequence[str],
+    consultation_state: CriticConsultationState,
+    responses_this_run: int,
+    consultation_active: bool,
+    policy: CriticInvocationPolicy,
+    critic_model: str = DEFAULT_AGENTIC_LOOP_CRITIC_MODEL,
+) -> CriticStep:
+    """Perform at most one critic response attempt.
+
+    A response-budget refusal is not a model call. A critic exception marks
+    the critic unavailable but does not fail the main agent's loop.
+    """
+    if decision.action != AgenticLoopAction.CONSULT_CRITIC:
+        raise ValueError(
+            "consult_critic_once requires a CONSULT_CRITIC decision."
+        )
+
+    if not consultation_active:
+        consultation_state = CriticConsultationState()
+        consultation_active = True
+
+    exhausted_reason = policy.exhausted_reason(
+        responses_this_consultation=consultation_state.responses_received,
+        responses_this_run=responses_this_run,
+    )
+
+    if not policy.can_consult(
+        main_agent_requested=True,
+        responses_this_consultation=consultation_state.responses_received,
+        responses_this_run=responses_this_run,
+    ):
+        if exhausted_reason == "consultation_limit":
+            consultation_state.status = (
+                CriticConsultationStatus.TURN_LIMIT_REACHED
+            )
+            feedback = (
+                "The critic consultation response limit has been reached. "
+                "No additional response was requested from the critic for "
+                "this consultation. Continue using available evidence or "
+                "take another action."
+            )
+        else:
+            consultation_state.status = (
+                CriticConsultationStatus.RUN_BUDGET_EXHAUSTED
+            )
+            feedback = (
+                "The critic response budget for this run is exhausted. "
+                "No additional critic response was requested. Continue using "
+                "available evidence or take another action."
+            )
+
+        return CriticStep(
+            state=consultation_state,
+            feedback=feedback,
+            response_received=False,
+            consultation_active=consultation_active,
+        )
+
+    by_sequence = {record.sequence: record for record in observations}
+    if decision.critic_observation_sequences:
+        selected_observations = [
+            by_sequence[sequence]
+            for sequence in decision.critic_observation_sequences
+            if sequence in by_sequence
+        ]
+    else:
+        selected_observations = list(observations[-MAX_OBSERVATION_COUNT:])
+
+    request = CriticConsultationRequest(
+        goal=goal,
+        question=decision.critic_question or "",
+        relevant_observations=selected_observations,
+        recent_actions=list(recent_actions[-5:]),
+        proposed_approach=decision.critic_proposed_approach,
+        dialogue_context=CriticDialogueContext(
+            summary=consultation_state.dialogue_summary,
+            recent_exchange=consultation_state.recent_exchange,
+        ),
+    )
+
+    main_turn = CriticDialogueTurn(
+        speaker=DialogueSpeaker.MAIN_AGENT,
+        content=bound_dialogue_turn(request.question),
+    )
+    critic_prompt = AGENTIC_LOOP_CRITIC_PROMPT.format(
+        consultation_request=json.dumps(
+            request.model_dump(mode="json"),
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+    try:
+        advice = await call_nvidia(
+            prompt=critic_prompt,
+            model=critic_model,
+            subagent=True,
+            state_model=CriticAdvice,
+        )
+        if not isinstance(advice, CriticAdvice):
+            raise TypeError(
+                "The LLM client returned an unexpected critic response "
+                f"type: {type(advice).__name__}."
+            )
+    except Exception as exc:
+        consultation_state.status = (
+            CriticConsultationStatus.CRITIC_UNAVAILABLE
+        )
+        return CriticStep(
+            state=consultation_state,
+            feedback=(
+                "The requested critic consultation did not produce a "
+                "usable response. No advice was received. Failure: "
+                f"{type(exc).__name__}: {exc}. Do not infer advice from "
+                "this failure; continue with available evidence or choose "
+                "another action."
+            ),
+            response_received=False,
+            consultation_active=consultation_active,
+        )
+
+    consultation_state.responses_received += 1
+    consultation_state.status = CriticConsultationStatus.OPEN
+    consultation_state.last_advice = advice
+
+    critic_turn = CriticDialogueTurn(
+        speaker=DialogueSpeaker.CRITIC,
+        content=bound_dialogue_turn(format_critic_advice(advice)),
+    )
+    previous_exchange = "\n".join(
+        f"{turn.speaker.value}: {turn.content}"
+        for turn in consultation_state.recent_exchange
+    )
+    if previous_exchange:
+        consultation_state.dialogue_summary = append_dialogue_summary(
+            consultation_state.dialogue_summary,
+            previous_exchange,
+        )
+
+    consultation_state.recent_exchange = [main_turn, critic_turn]
+
+    return CriticStep(
+        state=consultation_state,
+        feedback=render_critic_feedback(consultation_state),
+        response_received=True,
+        consultation_active=consultation_active,
+    )
+
+
+def end_critic_consultation(
+    state: CriticConsultationState,
+    *,
+    consultation_active: bool,
+) -> tuple[CriticConsultationState, bool]:
+    """End an active consultation when the main agent chooses another action."""
+    if not consultation_active:
+        return state, False
+
+    if state.status in (
+        CriticConsultationStatus.OPEN,
+        CriticConsultationStatus.CRITIC_UNAVAILABLE,
+    ):
+        state.status = CriticConsultationStatus.ENDED_BY_MAIN_AGENT
+
+    return state, False
