@@ -19,6 +19,11 @@ from models import (
 from output.models import AgentOutput
 from result_processing.models import RuntimeProcessingResult
 from runtime.models import RuntimeState
+from runtime.agentic_loop_critic_models import (
+    CriticConsultationState,
+    ObservationRecord,
+)
+from runtime.agentic_loop_models import AgenticLoopDecision, AgenticLoopResult
 from runtime.plan_execution_outcome import PlanExecutionOutcome
 from task_executor.models import ExecutionWorkflow
 from task_plan.models import TaskPlan
@@ -45,6 +50,16 @@ class TerminalState(TypedDict):
     ephemeral_execution_state: EphemeralExecutionState
     
     runtime_state: RuntimeState
+
+    # Agentic-loop state is task-scoped. Observations are factual records;
+    # critic dialogue/advice remains separate from those observations.
+    agentic_loop_decision: AgenticLoopDecision | None
+    agentic_loop_observations: list[ObservationRecord]
+    agentic_loop_critic_state: CriticConsultationState
+    agentic_loop_recent_actions: list[str]
+    agentic_loop_decisions_made: int
+    agentic_loop_critic_responses_received: int
+    agentic_loop_result: AgenticLoopResult | None
 
     concurrent_execution: bool
     

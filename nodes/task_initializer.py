@@ -10,6 +10,7 @@ from models import (
     ThreadMemory,
 )
 from runtime.models import RuntimeState
+from runtime.agentic_loop_critic_models import CriticConsultationState
 from state import TerminalState
 
 
@@ -70,6 +71,15 @@ def task_initializer_node(
         "execution_workflow": None,
         "critic_runtime_event": None,
         "runtime_state": runtime_state,
+        # Agentic-loop state is reset for each new task, while
+        # thread_memory above remains available across tasks in the same thread.
+        "agentic_loop_decision": None,
+        "agentic_loop_observations": [],
+        "agentic_loop_critic_state": CriticConsultationState(),
+        "agentic_loop_recent_actions": [],
+        "agentic_loop_decisions_made": 0,
+        "agentic_loop_critic_responses_received": 0,
+        "agentic_loop_result": None,
         "concurrent_execution": True,
         "persistent_memory": PersistentMemory(),
         "ephemeral_execution_state": EphemeralExecutionState(),
