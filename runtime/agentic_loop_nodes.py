@@ -1,6 +1,6 @@
-
 from __future__ import annotations
 
+from output.models import AgentOutput, OutputType
 from runtime.agentic_loop_context import MAX_OBSERVATION_COUNT
 from runtime.agentic_loop_critic_models import (
     CriticConsultationState,
@@ -25,11 +25,11 @@ from runtime.agentic_loop_operations import (
 from state import TerminalState
 from tools import TOOLS
 
+MAX_AGENTIC_LOOP_DECISIONS = 10
+
 
 def _observations(state: TerminalState) -> list[ObservationRecord]:
-    return list(state.get("agentic_loop_observations") or [])[
-        -MAX_OBSERVATION_COUNT:
-    ]
+    return list(state.get("agentic_loop_observations") or [])[-MAX_OBSERVATION_COUNT:]
 
 
 def _recent_actions(state: TerminalState) -> list[str]:
@@ -37,10 +37,7 @@ def _recent_actions(state: TerminalState) -> list[str]:
 
 
 def _critic_state(state: TerminalState) -> CriticConsultationState:
-    return (
-        state.get("agentic_loop_critic_state")
-        or CriticConsultationState()
-    )
+    return state.get("agentic_loop_critic_state") or CriticConsultationState()
 
 
 def _goal(state: TerminalState) -> str:
@@ -50,14 +47,31 @@ def _goal(state: TerminalState) -> str:
         goal = state.get("goal")
 
     if not isinstance(goal, str) or not goal.strip():
-        raise ValueError(
-            "Agentic-loop graph node requires the original task goal."
-        )
+        raise ValueError("Agentic-loop graph node requires the original task goal.")
     return goal.strip()
 
 
 async def agentic_loop_decision_node(state: TerminalState) -> dict:
     """Choose exactly one action and persist the decision."""
+
+    decisions_made = state.get("agentic_loop_decisions_made", 0)
+
+    if decisions_made >= MAX_AGENTIC_LOOP_DECISIONS:
+        return {
+            "agentic_loop_result": AgenticLoopResult(
+                status=AgenticLoopStatus.BUDGET_EXHAUSTED,
+                decisions_made=decisions_made,
+                critic_responses_received=state.get(
+                    "agentic_loop_critic_responses_received", 0
+                ),
+                rationale=(
+                    "The isolated agentic loop exhausted its decision "
+                    f"budget of {MAX_AGENTIC_LOOP_DECISIONS}."
+                ),
+                observations=[record.content for record in _observations(state)],
+            )
+        }
+
     try:
         decision = await decide_next_action(
             state,
@@ -74,13 +88,8 @@ async def agentic_loop_decision_node(state: TerminalState) -> dict:
             critic_responses_received=state.get(
                 "agentic_loop_critic_responses_received", 0
             ),
-            observations=[
-                record.content for record in _observations(state)
-            ],
-            error=(
-                f"Agentic-loop decision failed: "
-                f"{type(exc).__name__}: {exc}"
-            ),
+            observations=[record.content for record in _observations(state)],
+            error=(f"Agentic-loop decision failed: " f"{type(exc).__name__}: {exc}"),
         )
         return {"agentic_loop_result": result}
 
@@ -100,10 +109,13 @@ async def agentic_loop_capability_node(state: TerminalState) -> dict:
         return {}
 
     observations = _observations(state)
-    next_sequence = max(
-        (record.sequence for record in observations),
-        default=0,
-    ) + 1
+    next_sequence = (
+        max(
+            (record.sequence for record in observations),
+            default=0,
+        )
+        + 1
+    )
 
     step = await execute_selected_capability(
         decision,
@@ -111,9 +123,7 @@ async def agentic_loop_capability_node(state: TerminalState) -> dict:
         sequence=next_sequence,
     )
 
-    updated_observations = [*observations, step.observation][
-        -MAX_OBSERVATION_COUNT:
-    ]
+    updated_observations = [*observations, step.observation][-MAX_OBSERVATION_COUNT:]
     updated_actions = [
         *_recent_actions(state),
         step.action_summary,
@@ -144,19 +154,13 @@ async def agentic_loop_critic_node(state: TerminalState) -> dict:
         observations=observations,
         recent_actions=recent_actions,
         consultation_state=critic_state,
-        responses_this_run=state.get(
-            "agentic_loop_critic_responses_received", 0
-        ),
-        consultation_active=state.get(
-            "agentic_loop_critic_active", False
-        ),
+        responses_this_run=state.get("agentic_loop_critic_responses_received", 0),
+        consultation_active=state.get("agentic_loop_critic_active", False),
         policy=CriticInvocationPolicy(),
         critic_model=DEFAULT_AGENTIC_LOOP_CRITIC_MODEL,
     )
 
-    response_count = state.get(
-        "agentic_loop_critic_responses_received", 0
-    )
+    response_count = state.get("agentic_loop_critic_responses_received", 0)
     if step.response_received:
         response_count += 1
 
@@ -174,11 +178,127 @@ def end_agentic_loop_critic_consultation_node(
     """Close a consultation when the main agent selects a non-critic action."""
     critic_state, active = end_critic_consultation(
         _critic_state(state),
-        consultation_active=state.get(
-            "agentic_loop_critic_active", False
-        ),
+        consultation_active=state.get("agentic_loop_critic_active", False),
     )
     return {
         "agentic_loop_critic_state": critic_state,
         "agentic_loop_critic_active": active,
+    }
+
+def agentic_loop_terminal_node(state: TerminalState) -> dict:
+    """Persist an isolated-loop result and produce user-facing output.
+
+    This path intentionally does not claim that the runtime's
+    authoritative goal-completion gate has verified the goal.
+    """
+    result = state.get("agentic_loop_result")
+    decision = state.get("agentic_loop_decision")
+    observations = [record.content for record in _observations(state)]
+
+    if result is None:
+        decisions_made = state.get("agentic_loop_decisions_made", 0)
+        critic_responses = state.get(
+            "agentic_loop_critic_responses_received", 0
+        )
+
+        if decision is None:
+            result = AgenticLoopResult(
+                status=AgenticLoopStatus.FAILED,
+                decisions_made=decisions_made,
+                critic_responses_received=critic_responses,
+                observations=observations,
+                error=(
+                    "The isolated agentic loop reached its terminal "
+                    "node without a decision or a result."
+                ),
+            )
+
+        elif decision.action == AgenticLoopAction.FINISH:
+            result = AgenticLoopResult(
+                status=AgenticLoopStatus.FINISHED,
+                decisions_made=decisions_made,
+                critic_responses_received=critic_responses,
+                final_response=decision.final_response,
+                rationale=decision.rationale,
+                completion_evidence=decision.completion_evidence,
+                observations=observations,
+            )
+
+        elif decision.action == AgenticLoopAction.CLARIFICATION:
+            result = AgenticLoopResult(
+                status=AgenticLoopStatus.CLARIFICATION_REQUIRED,
+                decisions_made=decisions_made,
+                critic_responses_received=critic_responses,
+                clarification_question=decision.clarification_question,
+                rationale=decision.rationale,
+                observations=observations,
+            )
+
+        elif decision.action == AgenticLoopAction.COMPLEX_EXECUTION:
+            result = AgenticLoopResult(
+                status=AgenticLoopStatus.COMPLEX_EXECUTION_REQUESTED,
+                decisions_made=decisions_made,
+                critic_responses_received=critic_responses,
+                rationale=decision.rationale,
+                observations=observations,
+            )
+
+        else:
+            result = AgenticLoopResult(
+                status=AgenticLoopStatus.FAILED,
+                decisions_made=decisions_made,
+                critic_responses_received=critic_responses,
+                observations=observations,
+                error=(
+                    "The isolated agentic loop reached its terminal "
+                    f"node with non-terminal action {decision.action.value!r}."
+                ),
+            )
+
+    if result.status == AgenticLoopStatus.FINISHED:
+        # FINISH is not authoritative goal-completion verification.
+        output_type = OutputType.PARTIAL_COMPLETION
+        message = (
+            "The isolated agentic loop produced the following result. "
+            "The existing runtime completion gate was not run, so goal "
+            "completion has not been independently verified.\n\n"
+            f"{result.final_response}"
+        )
+
+    elif result.status == AgenticLoopStatus.CLARIFICATION_REQUIRED:
+        output_type = OutputType.BLOCKED
+        message = (
+            "The agentic loop needs clarification before it can continue:\n\n"
+            f"{result.clarification_question}"
+        )
+
+    elif result.status == AgenticLoopStatus.COMPLEX_EXECUTION_REQUESTED:
+        output_type = OutputType.BLOCKED
+        message = (
+            "The isolated agentic loop requested complex execution, but "
+            "that workflow is intentionally disabled in this test phase.\n\n"
+            f"Reason: {result.rationale or 'No reason was provided.'}"
+        )
+
+    elif result.status == AgenticLoopStatus.BUDGET_EXHAUSTED:
+        output_type = OutputType.PARTIAL_COMPLETION
+        message = (
+            "The isolated agentic loop stopped because its decision budget "
+            "was exhausted.\n\n"
+            f"{result.rationale or 'No additional details are available.'}"
+        )
+
+    else:
+        output_type = OutputType.FAILED
+        message = (
+            "The isolated agentic loop failed.\n\n"
+            f"{result.error or 'No error details are available.'}"
+        )
+
+    return {
+        "agentic_loop_result": result,
+        "agent_output": AgentOutput(
+            output_type=output_type,
+            message=message,
+        ),
     }

@@ -27,6 +27,15 @@ from runtime.consistency import (
     validate_runtime_consistency,
 )
 
+from runtime.agentic_loop_models import AgenticLoopAction
+from runtime.agentic_loop_nodes import (
+    agentic_loop_capability_node,
+    agentic_loop_critic_node,
+    agentic_loop_decision_node,
+    agentic_loop_terminal_node,
+    end_agentic_loop_critic_consultation_node,
+)
+
 from runtime.nodes import (
     execution_memory_finalize_node,
     runtime_critic_result_node,
@@ -56,6 +65,36 @@ checkpointer = MemorySaver()
 # ==========================================================
 # Graph-only routing helpers
 # ==========================================================
+
+def route_agentic_loop_decision(state: TerminalState) -> str:
+    """Route a persisted loop decision without entering complex execution."""
+    if state.get("agentic_loop_result") is not None:
+        return "agentic_loop_terminal"
+
+    decision = state.get("agentic_loop_decision")
+    if decision is None:
+        return "agentic_loop_terminal"
+
+    if decision.action == AgenticLoopAction.CONSULT_CRITIC:
+        return "agentic_loop_critic"
+
+    # Close an active critic consultation before handling any other action.
+    return "end_agentic_loop_critic_consultation"
+
+
+def route_after_agentic_loop_consultation(state: TerminalState) -> str:
+    """Dispatch the decision after closing any active critic consultation."""
+    decision = state.get("agentic_loop_decision")
+
+    if (
+        decision is not None
+        and decision.action == AgenticLoopAction.CAPABILITY
+    ):
+        return "agentic_loop_capability"
+
+    # FINISH, CLARIFICATION, COMPLEX_EXECUTION, and unexpected actions
+    # all terminate this isolated run; complex execution is not connected yet.
+    return "agentic_loop_terminal"
 
 def runtime_stage_mapping() -> dict:
     """
@@ -237,6 +276,34 @@ builder.add_node(
     runtime_memory_update_node,
 )
 
+# ==========================================================
+# Agentic Loop nodes
+# ==========================================================
+
+builder.add_node(
+    "agentic_loop_decision",
+    agentic_loop_decision_node,
+)
+
+builder.add_node(
+    "agentic_loop_capability",
+    agentic_loop_capability_node,
+)
+
+builder.add_node(
+    "agentic_loop_critic",
+    agentic_loop_critic_node,
+)
+
+builder.add_node(
+    "end_agentic_loop_critic_consultation",
+    end_agentic_loop_critic_consultation_node,
+)
+
+builder.add_node(
+    "agentic_loop_terminal",
+    agentic_loop_terminal_node,
+)
 
 # ==========================================================
 # Entry
@@ -251,17 +318,64 @@ builder.set_entry_point(
 # Initialization
 # ==========================================================
 
+# builder.add_edge(
+#     "task_initializer",
+#     "runtime_initialization",
+# )
+
+# builder.add_conditional_edges(
+#     "runtime_initialization",
+#     runtime_stage_router,
+#     runtime_stage_mapping(),
+# )
+
+# ==========================================================
+# Agentic loop edges
+# ==========================================================
+
+# Isolated agentic-loop test path.
+# The existing runtime initialization and planner/execution workflow
+# remain registered but are intentionally bypassed for this phase.
 builder.add_edge(
     "task_initializer",
-    "runtime_initialization",
+    "agentic_loop_decision",
 )
 
 builder.add_conditional_edges(
-    "runtime_initialization",
-    runtime_stage_router,
-    runtime_stage_mapping(),
+    "agentic_loop_decision",
+    route_agentic_loop_decision,
+    {
+        "agentic_loop_critic": "agentic_loop_critic",
+        "end_agentic_loop_critic_consultation": (
+            "end_agentic_loop_critic_consultation"
+        ),
+        "agentic_loop_terminal": "agentic_loop_terminal",
+    },
 )
 
+builder.add_edge(
+    "agentic_loop_capability",
+    "agentic_loop_decision",
+)
+
+builder.add_edge(
+    "agentic_loop_critic",
+    "agentic_loop_decision",
+)
+
+builder.add_conditional_edges(
+    "end_agentic_loop_critic_consultation",
+    route_after_agentic_loop_consultation,
+    {
+        "agentic_loop_capability": "agentic_loop_capability",
+        "agentic_loop_terminal": "agentic_loop_terminal",
+    },
+)
+
+builder.add_edge(
+    "agentic_loop_terminal",
+    END,
+)
 
 # ==========================================================
 # Planner
