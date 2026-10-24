@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
@@ -24,6 +23,8 @@ from runtime.agentic_loop_operations import (
     decide_next_action,
     end_critic_consultation,
     execute_selected_capability,
+    repeated_action_observation,
+    should_block_repeated_action,
 )
 from tools import TOOLS
 
@@ -50,16 +51,11 @@ async def run_agentic_loop(
             f"{MAX_ALLOWED_DECISIONS}; received {max_decisions}."
         )
 
-    available_capabilities = list(
-        TOOLS if capabilities is None else capabilities
-    )
+    available_capabilities = list(TOOLS if capabilities is None else capabilities)
     policy = critic_policy or CriticInvocationPolicy()
     resolved_critic_model = critic_model or model
 
-    seeded = [
-        bound_observation(observation)
-        for observation in (observations or ())
-    ]
+    seeded = [bound_observation(observation) for observation in (observations or ())]
     observation_records = [
         ObservationRecord(
             sequence=index,
@@ -106,17 +102,14 @@ async def run_agentic_loop(
                 critic_responses_received=critic_responses_received,
                 observations=current_observations(),
                 error=(
-                    f"Agentic-loop decision failed: "
-                    f"{type(exc).__name__}: {exc}"
+                    f"Agentic-loop decision failed: " f"{type(exc).__name__}: {exc}"
                 ),
             )
 
         decisions_made += 1
 
         if decision.action == AgenticLoopAction.CONSULT_CRITIC:
-            remember_action(
-                f"CONSULT_CRITIC: {decision.critic_question or ''}"
-            )
+            remember_action(f"CONSULT_CRITIC: {decision.critic_question or ''}")
             try:
                 step = await consult_critic_once(
                     decision,
@@ -184,6 +177,18 @@ async def run_agentic_loop(
             )
 
         if decision.action == AgenticLoopAction.CAPABILITY:
+            if should_block_repeated_action(decision, observation_records):
+                append_observation(
+                    repeated_action_observation(
+                        decision,
+                        sequence=next_sequence,
+                    )
+                )
+                next_sequence += 1
+                remember_action(
+                    f"CAPABILITY blocked as duplicate: {decision.capability_name}"
+                )
+                continue
             step = await execute_selected_capability(
                 decision,
                 capabilities=available_capabilities,
@@ -217,9 +222,7 @@ async def run_agentic_loop(
 def _resolve_goal(state: Mapping[str, Any]) -> str:
     task = state.get("task")
     task_goal = (
-        task.get("goal")
-        if isinstance(task, Mapping)
-        else getattr(task, "goal", None)
+        task.get("goal") if isinstance(task, Mapping) else getattr(task, "goal", None)
     )
     if isinstance(task_goal, str) and task_goal.strip():
         return task_goal.strip()
@@ -228,6 +231,4 @@ def _resolve_goal(state: Mapping[str, Any]) -> str:
     if isinstance(state_goal, str) and state_goal.strip():
         return state_goal.strip()
 
-    raise ValueError(
-        "Cannot build AgenticLoopContext without an original task goal."
-    )
+    raise ValueError("Cannot build AgenticLoopContext without an original task goal.")

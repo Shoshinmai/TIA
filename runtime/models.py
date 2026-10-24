@@ -130,3 +130,11 @@ def snapshot_runtime(
         last_event=runtime_state.last_event,
         iteration=runtime_state.iteration,
     )
+
+# Fake Model
+class FAKE_MODEL(BaseModel):
+    """
+    Single planning decision produced by the planner.
+    """
+
+    answer: str = Field(description="response from the model.")

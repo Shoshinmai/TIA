@@ -133,6 +133,10 @@ def _omniroute_model(model: str) -> str:
     object for deployments whose provider catalog uses different IDs; a map
     value may also be a configured OmniRoute combo/auto route.
     """
+    
+    # OmniRoute routing aliases must pass through unchanged.
+    if model.strip().lower() in {"auto", "auto/fast"}:
+        return model.strip()
 
     model_map = _parse_omniroute_model_map(
         os.getenv("OMNIROUTE_MODEL_MAP", "")
@@ -1396,7 +1400,9 @@ async def _aexecute_nvidia_call(
     )
 
 
-_OMNIROUTE_FALLBACK_MODEL = "openai/gpt-oss-20b"
+_OMNIROUTE_FALLBACK_MODEL = (
+    os.getenv("OMNIROUTE_FALLBACK_MODEL", "auto").strip() or "auto"
+)
 
 
 async def call_nvidia(

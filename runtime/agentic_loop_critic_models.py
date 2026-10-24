@@ -6,7 +6,7 @@ from typing import Self
 from pydantic import BaseModel, Field, model_validator
 
 
-MAX_OBSERVATION_CHARS = 1_500
+MAX_OBSERVATION_CHARS = 6_000
 MAX_OBSERVATIONS_PER_CONTEXT = 10
 MAX_DIALOGUE_SUMMARY_CHARS = 3_000
 MAX_DIALOGUE_TURN_CHARS = 2_500
@@ -33,6 +33,7 @@ class ObservationRecord(BaseModel):
     sequence: int = Field(ge=1)
     source: ObservationSource
     source_name: str = Field(default="", max_length=200)
+    action_signature: str | None = Field(default=None, max_length=200)
     content: str = Field(min_length=1, max_length=MAX_OBSERVATION_CHARS)
 
     @model_validator(mode="after")

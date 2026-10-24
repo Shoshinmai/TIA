@@ -21,6 +21,8 @@ from runtime.agentic_loop_operations import (
     end_critic_consultation,
     execute_selected_capability,
     render_critic_feedback,
+    repeated_action_observation,
+    should_block_repeated_action,
 )
 from state import TerminalState
 from tools import TOOLS
@@ -103,27 +105,46 @@ async def agentic_loop_decision_node(state: TerminalState) -> dict:
 
 
 async def agentic_loop_capability_node(state: TerminalState) -> dict:
-    """Execute the selected capability once and persist its observation."""
+    """Execute one capability unless an identical request should be blocked."""
     decision = state.get("agentic_loop_decision")
     if decision is None or decision.action != AgenticLoopAction.CAPABILITY:
         return {}
 
     observations = _observations(state)
     next_sequence = (
-        max(
-            (record.sequence for record in observations),
-            default=0,
-        )
-        + 1
+        max((record.sequence for record in observations), default=0) + 1
     )
+
+    if should_block_repeated_action(decision, observations):
+        observation = repeated_action_observation(
+            decision,
+            sequence=next_sequence,
+        )
+        updated_observations = [
+            *observations,
+            observation,
+        ][-MAX_OBSERVATION_COUNT:]
+        updated_actions = [
+            *_recent_actions(state),
+            f"CAPABILITY blocked as duplicate: {decision.capability_name}",
+        ][-5:]
+
+        return {
+            "agentic_loop_observations": updated_observations,
+            "agentic_loop_recent_actions": updated_actions,
+        }
 
     step = await execute_selected_capability(
         decision,
         capabilities=TOOLS,
         sequence=next_sequence,
+        goal=_goal(state),
     )
 
-    updated_observations = [*observations, step.observation][-MAX_OBSERVATION_COUNT:]
+    updated_observations = [
+        *observations,
+        step.observation,
+    ][-MAX_OBSERVATION_COUNT:]
     updated_actions = [
         *_recent_actions(state),
         step.action_summary,

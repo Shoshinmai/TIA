@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -93,9 +92,7 @@ def _resolve_goal(
 
     task = state.get("task")
     task_goal = (
-        task.get("goal")
-        if isinstance(task, Mapping)
-        else getattr(task, "goal", None)
+        task.get("goal") if isinstance(task, Mapping) else getattr(task, "goal", None)
     )
 
     if isinstance(task_goal, str) and task_goal.strip():
@@ -105,9 +102,7 @@ def _resolve_goal(
     if isinstance(state_goal, str) and state_goal.strip():
         return state_goal.strip()
 
-    raise ValueError(
-        "Cannot build AgenticLoopContext without an original task goal."
-    )
+    raise ValueError("Cannot build AgenticLoopContext without an original task goal.")
 
 
 def _build_loop_context(state: Mapping[str, Any]) -> str:
@@ -117,6 +112,24 @@ def _build_loop_context(state: Mapping[str, Any]) -> str:
     workspace = state.get("workspace")
     if isinstance(workspace, str) and workspace.strip():
         sections.extend(["## Workspace", workspace.strip()])
+
+    recent_actions = state.get("agentic_loop_recent_actions") or []
+    if recent_actions:
+        sections.extend(
+            [
+                "",
+                "## Recent Actions Already Attempted",
+                *[
+                    f"{index}. {action}"
+                    for index, action in enumerate(recent_actions, start=1)
+                ],
+                (
+                    "Avoid repeating an action that has already produced "
+                    "sufficient evidence. Repeat it only when there is a "
+                    "specific reason to expect a different or missing result."
+                ),
+            ]
+        )
 
     active_memory = state.get("active_memory")
     if active_memory is None:
@@ -168,8 +181,7 @@ def _build_loop_context(state: Mapping[str, Any]) -> str:
         last_event = getattr(runtime_state, "last_event", None)
         if last_event is not None:
             runtime_lines.append(
-                "Last runtime event: "
-                f"{getattr(last_event, 'value', last_event)}"
+                "Last runtime event: " f"{getattr(last_event, 'value', last_event)}"
             )
 
         iteration = getattr(runtime_state, "iteration", None)
@@ -240,9 +252,7 @@ def _build_capabilities(capabilities: Sequence[Any]) -> str:
         )
 
         if metadata["return_description"]:
-            entry_lines.append(
-                f"Returns: {metadata['return_description']}"
-            )
+            entry_lines.append(f"Returns: {metadata['return_description']}")
 
         if metadata["usage_notes"]:
             entry_lines.append(f"Usage notes: {metadata['usage_notes']}")
@@ -271,9 +281,7 @@ def _build_capabilities(capabilities: Sequence[Any]) -> str:
     if omitted:
         while rendered_entries:
             candidate = (
-                "\n\n".join(rendered_entries)
-                + "\n\n"
-                + _CAPABILITY_OMISSION_MARKER
+                "\n\n".join(rendered_entries) + "\n\n" + _CAPABILITY_OMISSION_MARKER
             )
             if len(candidate) <= MAX_CAPABILITIES_CHARS:
                 return candidate
@@ -290,24 +298,35 @@ def _build_capabilities(capabilities: Sequence[Any]) -> str:
 
 
 def _build_observations(observations: Sequence[str]) -> str:
-    """Keep the newest observations and bound both entries and total text."""
+    """Prioritize the newest observations within the total context budget."""
     recent = list(observations)[-MAX_OBSERVATION_COUNT:]
 
     if not recent:
         return "No previous action observations."
 
-    lines: list[str] = []
+    # Select from newest to oldest, stopping when the budget is full.
+    # Then reverse the selected entries so the prompt remains chronological.
+    selected: list[str] = []
 
-    for index, observation in enumerate(recent, start=1):
+    for index in range(len(recent), 0, -1):
+        observation = recent[index - 1]
         rendered = (
-            observation
-            if isinstance(observation, str)
-            else str(observation)
-        )
-        rendered = _truncate(rendered.strip(), MAX_OBSERVATION_CHARS)
-        lines.append(f"{index}. {rendered or '(empty observation)'}")
+            observation if isinstance(observation, str) else str(observation)
+        ).strip()
+        rendered = _truncate(rendered, MAX_OBSERVATION_CHARS)
+        line = f"{index}. {rendered or '(empty observation)'}"
 
-    return _truncate("\n".join(lines), MAX_OBSERVATIONS_CHARS)
+        candidate = "\n".join([line, *selected])
+        if len(candidate) <= MAX_OBSERVATIONS_CHARS:
+            selected.insert(0, line)
+            continue
+
+        if not selected:
+            # The newest observation alone is larger than the total budget.
+            selected.append(_truncate(line, MAX_OBSERVATIONS_CHARS))
+        break
+
+    return "\n".join(selected) or "No previous action observations."
 
 
 def _truncate(text: str, limit: int) -> str:

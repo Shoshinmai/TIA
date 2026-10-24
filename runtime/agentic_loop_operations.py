@@ -1,6 +1,6 @@
-
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -9,6 +9,8 @@ from typing import Any
 from llm.llmclient import call_nvidia
 from prompts.agentic_loop_critic_prompt import AGENTIC_LOOP_CRITIC_PROMPT
 from prompts.agentic_loop_prompt import AGENTIC_LOOP_PROMPT
+from result_processing.artifact_policy import evaluate_artifact_candidate
+from result_processing.normalizer import normalize_result
 from runtime.agentic_loop_context import (
     MAX_OBSERVATION_COUNT,
     build_agentic_loop_context,
@@ -32,9 +34,11 @@ from runtime.agentic_loop_models import (
     AgenticLoopDecision,
 )
 from tools import TOOLS
+from utils.normalized_result_formatter import format_normalized_result
 
 
-DEFAULT_AGENTIC_LOOP_MODEL = "nvidia/nemotron-3-super-120b-a12b"
+DEFAULT_AGENTIC_LOOP_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
+# DEFAULT_AGENTIC_LOOP_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 DEFAULT_AGENTIC_LOOP_CRITIC_MODEL = DEFAULT_AGENTIC_LOOP_MODEL
 
 _OBSERVATION_TRUNCATION_MARKER = "\n...[observation truncated]"
@@ -77,8 +81,34 @@ def format_capability_observation(
     *,
     capability_name: str,
     result: Any,
+    goal: str | None = None,
 ) -> str:
-    """Format an actual capability result without semantic interpretation."""
+    """Prefer the existing normalized formatter, with a safe raw fallback."""
+    if isinstance(result, dict):
+        try:
+            normalized = normalize_result(
+                tool_name=capability_name,
+                raw_result=result,
+            )
+            artifact_decision = evaluate_artifact_candidate(normalized)
+
+            formatted = format_normalized_result(
+                goal=goal or "Current task",
+                normalized=normalized,
+                artifact_decision=artifact_decision,
+            )
+            return (
+                f"Capability: {capability_name}\n"
+                f"Execution success: {normalized.execution.success}\n"
+                f"Progress made: {normalized.execution.progress_made}\n\n"
+                f"{formatted}"
+            )
+        except Exception:
+            # Some capabilities may not have a normalizer, or may return
+            # a shape that their normalizer cannot handle. Preserve the
+            # result rather than failing capability execution.
+            pass
+
     if isinstance(result, str):
         rendered_result = result
     else:
@@ -92,10 +122,7 @@ def format_capability_observation(
         except (TypeError, ValueError):
             rendered_result = str(result)
 
-    return (
-        f"Capability: {capability_name}\n"
-        f"Returned result:\n{rendered_result}"
-    )
+    return f"Capability: {capability_name}\n" f"Returned result:\n{rendered_result}"
 
 
 def format_critic_advice(advice: CriticAdvice) -> str:
@@ -115,9 +142,7 @@ def render_critic_feedback(state: CriticConsultationState) -> str:
     sections: list[str] = []
 
     if state.dialogue_summary:
-        sections.extend(
-            ["Earlier consultation summary:", state.dialogue_summary]
-        )
+        sections.extend(["Earlier consultation summary:", state.dialogue_summary])
 
     if state.recent_exchange:
         sections.append("Most recent exchange:")
@@ -161,9 +186,7 @@ async def decide_next_action(
     model: str = DEFAULT_AGENTIC_LOOP_MODEL,
 ) -> AgenticLoopDecision:
     """Build bounded context and obtain exactly one structured decision."""
-    available_capabilities = list(
-        TOOLS if capabilities is None else capabilities
-    )
+    available_capabilities = list(TOOLS if capabilities is None else capabilities)
 
     context = build_agentic_loop_context(
         state=state,
@@ -197,6 +220,7 @@ async def execute_selected_capability(
     *,
     capabilities: Sequence[Any] | None = None,
     sequence: int,
+    goal: str | None = None,
 ) -> CapabilityStep:
     """Execute one capability and return its factual observation.
 
@@ -204,13 +228,9 @@ async def execute_selected_capability(
     than escaping as exceptions. This matches the standalone runner contract.
     """
     if decision.action != AgenticLoopAction.CAPABILITY:
-        raise ValueError(
-            "execute_selected_capability requires a CAPABILITY decision."
-        )
+        raise ValueError("execute_selected_capability requires a CAPABILITY decision.")
 
-    available_capabilities = list(
-        TOOLS if capabilities is None else capabilities
-    )
+    available_capabilities = list(TOOLS if capabilities is None else capabilities)
     capability_name = decision.capability_name or ""
     capability_map = {
         capability.name: capability
@@ -235,6 +255,7 @@ async def execute_selected_capability(
             content = format_capability_observation(
                 capability_name=capability_name,
                 result=result,
+                goal=goal,
             )
             source = ObservationSource.CAPABILITY
             source_name = capability_name
@@ -253,6 +274,7 @@ async def execute_selected_capability(
             sequence=sequence,
             source=source,
             source_name=source_name[:200],
+            action_signature=capability_action_signature(decision),
             content=bound_observation(content),
         ),
         action_summary=action_summary[:2_000],
@@ -277,9 +299,7 @@ async def consult_critic_once(
     the critic unavailable but does not fail the main agent's loop.
     """
     if decision.action != AgenticLoopAction.CONSULT_CRITIC:
-        raise ValueError(
-            "consult_critic_once requires a CONSULT_CRITIC decision."
-        )
+        raise ValueError("consult_critic_once requires a CONSULT_CRITIC decision.")
 
     if not consultation_active:
         consultation_state = CriticConsultationState()
@@ -296,9 +316,7 @@ async def consult_critic_once(
         responses_this_run=responses_this_run,
     ):
         if exhausted_reason == "consultation_limit":
-            consultation_state.status = (
-                CriticConsultationStatus.TURN_LIMIT_REACHED
-            )
+            consultation_state.status = CriticConsultationStatus.TURN_LIMIT_REACHED
             feedback = (
                 "The critic consultation response limit has been reached. "
                 "No additional response was requested from the critic for "
@@ -306,9 +324,7 @@ async def consult_critic_once(
                 "take another action."
             )
         else:
-            consultation_state.status = (
-                CriticConsultationStatus.RUN_BUDGET_EXHAUSTED
-            )
+            consultation_state.status = CriticConsultationStatus.RUN_BUDGET_EXHAUSTED
             feedback = (
                 "The critic response budget for this run is exhausted. "
                 "No additional critic response was requested. Continue using "
@@ -369,9 +385,7 @@ async def consult_critic_once(
                 f"type: {type(advice).__name__}."
             )
     except Exception as exc:
-        consultation_state.status = (
-            CriticConsultationStatus.CRITIC_UNAVAILABLE
-        )
+        consultation_state.status = CriticConsultationStatus.CRITIC_UNAVAILABLE
         return CriticStep(
             state=consultation_state,
             feedback=(
@@ -429,3 +443,91 @@ def end_critic_consultation(
         state.status = CriticConsultationStatus.ENDED_BY_MAIN_AGENT
 
     return state, False
+
+
+def capability_action_signature(decision: AgenticLoopDecision) -> str:
+    """Return a stable identity for a capability request."""
+    payload = json.dumps(
+        decision.arguments,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    )
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return f"{decision.capability_name or ''}:{digest}"
+
+
+def _previous_attempt_failed(observation: ObservationRecord) -> bool:
+    """Recognize explicit failure evidence, not merely repeated activity."""
+    text = observation.content.lower()
+    failure_markers = (
+        "execution error:",
+        "success: false",
+        '"success": false',
+        "timed out",
+        "timeout",
+        "exception",
+        "failed",
+        "return code: 1",
+    )
+    return any(marker in text for marker in failure_markers)
+
+
+def should_block_repeated_action(
+    decision: AgenticLoopDecision,
+    observations: Sequence[ObservationRecord],
+) -> bool:
+    """Block unexplained duplicate requests, allowing at most one justified retry."""
+    if decision.action != AgenticLoopAction.CAPABILITY:
+        return False
+
+    signature = capability_action_signature(decision)
+    matching = [
+        record for record in observations if record.action_signature == signature
+    ]
+
+    if not matching:
+        return False
+
+    rationale = decision.rationale.lower()
+    explicit_retry = any(
+        marker in rationale
+        for marker in (
+            "retry",
+            "retrying",
+            "try again",
+            "re-attempt",
+            "reattempt",
+        )
+    )
+
+    # Permit one explicitly justified retry only when the previous
+    # execution produced concrete failure evidence. Any further repeat
+    # is blocked, even if the rationale again says "retry".
+    if len(matching) == 1 and explicit_retry and _previous_attempt_failed(matching[-1]):
+        return False
+
+    return True
+
+
+def repeated_action_observation(
+    decision: AgenticLoopDecision,
+    *,
+    sequence: int,
+) -> ObservationRecord:
+    """Build a runtime observation when an identical action is blocked."""
+    signature = capability_action_signature(decision)
+    return ObservationRecord(
+        sequence=sequence,
+        source=ObservationSource.RUNTIME,
+        source_name="repeat_action_guard",
+        action_signature=signature,
+        content=bound_observation(
+            "Repeated capability request was blocked without a justified "
+            "retry. The same capability and arguments were already attempted. "
+            "Use the existing evidence, choose a different action, or explain "
+            "a retry only if the previous execution failed and another attempt "
+            "is genuinely warranted."
+        ),
+    )
