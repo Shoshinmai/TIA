@@ -71,6 +71,7 @@ def format_normalized_result(
     goal: str,
     normalized: NormalizedResult,
     artifact_decision: ArtifactDecision,
+    include_artifacts: bool = True,
 ) -> str:
     """
     Convert a NormalizedResult into a concise LLM-friendly
@@ -89,7 +90,7 @@ def format_normalized_result(
     # --------------------------------------------------
 
     lines.append(f"Tool: {normalized.context.tool_name}")
-    
+
     if normalized.context.tool_name == "run_terminal":
 
         execution = normalized.execution
@@ -97,13 +98,9 @@ def format_normalized_result(
         lines.append("")
         lines.append("Execution:")
 
-        lines.append(
-            f"- Success: {execution.success}"
-        )
+        lines.append(f"- Success: {execution.success}")
 
-        lines.append(
-            f"- Return code: {execution.return_code}"
-        )
+        lines.append(f"- Return code: {execution.return_code}")
 
     # --------------------------------------------------
     # Facts
@@ -149,6 +146,43 @@ def format_normalized_result(
         if remaining > 0:
 
             lines.append(f"... and {remaining} more resources.")
+
+    # --------------------------------------------------
+    # Artifact-free execution path
+    # --------------------------------------------------
+
+    if not include_artifacts:
+        lines.append("")
+        lines.append("Artifact persistence: disabled for this execution path.")
+
+        artifact = normalized.artifact
+
+        # Keep useful file or terminal content inline. Do not claim
+        # that the content was stored or can be retrieved later.
+        if (
+            normalized.context.tool_name in INLINE_CONTENT_TOOLS
+            and artifact is not None
+            and isinstance(artifact.data, dict)
+        ):
+            content = _extract_inline_content(
+                tool_name=normalized.context.tool_name,
+                artifact_data=artifact.data,
+            )
+
+            _append_content_section(
+                lines=lines,
+                title="Content",
+                content=content,
+            )
+
+        if len(normalized.resources) > MAX_DISPLAYED_RESOURCES:
+            omitted = len(normalized.resources) - MAX_DISPLAYED_RESOURCES
+            lines.append(
+                f"{omitted} additional resources were omitted from "
+                "this bounded observation."
+            )
+
+        return "\n".join(lines)
 
     # --------------------------------------------------
     # Artifact

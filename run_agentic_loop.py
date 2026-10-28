@@ -27,9 +27,9 @@ async def main() -> None:
     thread_id = f"agentic-loop-{uuid.uuid4().hex[:12]}"
 
     initial_state = {
-        # "goal": """in the current project is the models file available.""",
-        "goal": """Inspect the current project directory,identify the main application entry point,
-                   and explain what it does. Use the available capabilities to gather evidence before responding.""",
+        "goal": """list the installed games on the steam app. take the critic help is necessary.""",
+        # "goal": """Inspect the current project directory,identify the main application entry point,
+        #            and explain what it does. Use the available capabilities to gather evidence before responding.""",
         "workspace": os.getcwd(),
         "messages": [],
     }

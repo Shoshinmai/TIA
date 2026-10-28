@@ -27,7 +27,7 @@ from runtime.agentic_loop_operations import (
 from state import TerminalState
 from tools import TOOLS
 
-MAX_AGENTIC_LOOP_DECISIONS = 10
+MAX_AGENTIC_LOOP_DECISIONS = 20
 
 
 def _observations(state: TerminalState) -> list[ObservationRecord]:
@@ -139,6 +139,7 @@ async def agentic_loop_capability_node(state: TerminalState) -> dict:
         capabilities=TOOLS,
         sequence=next_sequence,
         goal=_goal(state),
+        active_memory=state.get("active_memory"),
     )
 
     updated_observations = [
@@ -153,6 +154,7 @@ async def agentic_loop_capability_node(state: TerminalState) -> dict:
     return {
         "agentic_loop_observations": updated_observations,
         "agentic_loop_recent_actions": updated_actions,
+        "active_memory": step.active_memory,
     }
 
 

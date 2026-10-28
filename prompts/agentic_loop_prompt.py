@@ -178,18 +178,23 @@ compromise correctness or safety.
 Use the following information to make your next decision.
 
 Original user objective:
+
 {goal}
 
 Current situation and relevant context:
+
 {loop_context}
 
 Available capabilities and their input schemas:
+
 {available_capabilities}
 
 Observations from previous actions:
+
 {observations}
 
 Critic consultation history and advice (advisory, not observations):
+
 {critic_feedback}
 
 # RESPONSE REQUIREMENTS

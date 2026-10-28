@@ -32,6 +32,7 @@ async def process_tool_result(
     tool_name: str,
     raw_result: dict,
     attempt: int = 1,
+    include_artifacts: bool = True,
 ) -> RuntimeProcessingResult:
     """
     Process a raw tool result through the Runtime Processing Pipeline.
@@ -75,6 +76,7 @@ async def process_tool_result(
         goal=state["goal"],
         normalized=normalized,
         artifact_decision=artifact_decision,
+        include_artifacts=include_artifacts,
     )
 
     # ==========================================================
@@ -128,4 +130,5 @@ async def process_tool_result(
         normalized_result=normalized,
         artifact_decision=artifact_decision,
         memory_update=proposal,
+        formatted_observation=formatted_observation,
     )

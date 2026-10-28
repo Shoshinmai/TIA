@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from models import ActiveTaskMemory
 from runtime.agentic_loop_context import MAX_OBSERVATION_COUNT
 from runtime.agentic_loop_critic_models import (
     CriticConsultationState,
@@ -54,6 +55,20 @@ async def run_agentic_loop(
     available_capabilities = list(TOOLS if capabilities is None else capabilities)
     policy = critic_policy or CriticInvocationPolicy()
     resolved_critic_model = critic_model or model
+    resolved_goal = goal or _resolve_goal(state)
+
+    # The standalone runner owns a local working copy. Memory updates
+    # affect later decisions in this run without mutating the caller's state.
+    working_state = dict(state)
+    working_state["goal"] = resolved_goal
+
+    supplied_memory = state.get("active_memory")
+    if isinstance(supplied_memory, ActiveTaskMemory):
+        active_memory = supplied_memory.model_copy(deep=True)
+    else:
+        active_memory = ActiveTaskMemory()
+
+    working_state["active_memory"] = active_memory
 
     seeded = [bound_observation(observation) for observation in (observations or ())]
     observation_records = [
@@ -88,10 +103,10 @@ async def run_agentic_loop(
     for _ in range(max_decisions):
         try:
             decision = await decide_next_action(
-                state,
+                working_state,
                 observations=current_observations(),
                 capabilities=available_capabilities,
-                goal=goal,
+                goal=resolved_goal,
                 critic_feedback=critic_feedback,
                 model=model,
             )
@@ -113,7 +128,7 @@ async def run_agentic_loop(
             try:
                 step = await consult_critic_once(
                     decision,
-                    goal=goal or _resolve_goal(state),
+                    goal=resolved_goal,
                     observations=observation_records,
                     recent_actions=recent_actions,
                     consultation_state=consultation_state,
@@ -193,7 +208,11 @@ async def run_agentic_loop(
                 decision,
                 capabilities=available_capabilities,
                 sequence=next_sequence,
+                goal=resolved_goal,
+                active_memory=working_state["active_memory"],
             )
+            if step.active_memory is not None:
+                working_state["active_memory"] = step.active_memory
             next_sequence += 1
             append_observation(step.observation)
             remember_action(step.action_summary)

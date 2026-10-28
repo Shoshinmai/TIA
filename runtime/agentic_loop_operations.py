@@ -9,8 +9,8 @@ from typing import Any
 from llm.llmclient import call_nvidia
 from prompts.agentic_loop_critic_prompt import AGENTIC_LOOP_CRITIC_PROMPT
 from prompts.agentic_loop_prompt import AGENTIC_LOOP_PROMPT
-from result_processing.artifact_policy import evaluate_artifact_candidate
-from result_processing.normalizer import normalize_result
+from result_processing.processor import process_tool_result
+from result_processing.state_mutator import mutate_state
 from runtime.agentic_loop_context import (
     MAX_OBSERVATION_COUNT,
     build_agentic_loop_context,
@@ -43,12 +43,19 @@ DEFAULT_AGENTIC_LOOP_CRITIC_MODEL = DEFAULT_AGENTIC_LOOP_MODEL
 
 _OBSERVATION_TRUNCATION_MARKER = "\n...[observation truncated]"
 _DIALOGUE_TRUNCATION_MARKER = "\n...[earlier dialogue truncated]"
+_ARTIFACT_CAPABILITY_NAMES = frozenset(
+    {
+        "search_artifact",
+        "read_artifact",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
 class CapabilityStep:
     observation: ObservationRecord
     action_summary: str
+    active_memory: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,38 +84,26 @@ def bound_observation(observation: Any) -> str:
     return rendered[:available] + _OBSERVATION_TRUNCATION_MARKER
 
 
+def _agentic_loop_capabilities(
+    capabilities: Sequence[Any] | None,
+) -> list[Any]:
+    """Return capabilities permitted in the artifact-free isolated loop."""
+    available = TOOLS if capabilities is None else capabilities
+
+    return [
+        capability
+        for capability in available
+        if getattr(capability, "name", None) not in _ARTIFACT_CAPABILITY_NAMES
+    ]
+
+
 def format_capability_observation(
     *,
     capability_name: str,
     result: Any,
     goal: str | None = None,
 ) -> str:
-    """Prefer the existing normalized formatter, with a safe raw fallback."""
-    if isinstance(result, dict):
-        try:
-            normalized = normalize_result(
-                tool_name=capability_name,
-                raw_result=result,
-            )
-            artifact_decision = evaluate_artifact_candidate(normalized)
-
-            formatted = format_normalized_result(
-                goal=goal or "Current task",
-                normalized=normalized,
-                artifact_decision=artifact_decision,
-            )
-            return (
-                f"Capability: {capability_name}\n"
-                f"Execution success: {normalized.execution.success}\n"
-                f"Progress made: {normalized.execution.progress_made}\n\n"
-                f"{formatted}"
-            )
-        except Exception:
-            # Some capabilities may not have a normalizer, or may return
-            # a shape that their normalizer cannot handle. Preserve the
-            # result rather than failing capability execution.
-            pass
-
+    """Render a fallback observation when structured processing is unavailable."""
     if isinstance(result, str):
         rendered_result = result
     else:
@@ -186,7 +181,7 @@ async def decide_next_action(
     model: str = DEFAULT_AGENTIC_LOOP_MODEL,
 ) -> AgenticLoopDecision:
     """Build bounded context and obtain exactly one structured decision."""
-    available_capabilities = list(TOOLS if capabilities is None else capabilities)
+    available_capabilities = _agentic_loop_capabilities(capabilities)
 
     context = build_agentic_loop_context(
         state=state,
@@ -221,6 +216,7 @@ async def execute_selected_capability(
     capabilities: Sequence[Any] | None = None,
     sequence: int,
     goal: str | None = None,
+    active_memory: Any | None = None,
 ) -> CapabilityStep:
     """Execute one capability and return its factual observation.
 
@@ -230,7 +226,7 @@ async def execute_selected_capability(
     if decision.action != AgenticLoopAction.CAPABILITY:
         raise ValueError("execute_selected_capability requires a CAPABILITY decision.")
 
-    available_capabilities = list(TOOLS if capabilities is None else capabilities)
+    available_capabilities = _agentic_loop_capabilities(capabilities)
     capability_name = decision.capability_name or ""
     capability_map = {
         capability.name: capability
@@ -252,11 +248,51 @@ async def execute_selected_capability(
     else:
         try:
             result = await capability.ainvoke(decision.arguments)
-            content = format_capability_observation(
-                capability_name=capability_name,
-                result=result,
-                goal=goal,
-            )
+
+            if (
+                isinstance(result, dict)
+                and active_memory is not None
+                and isinstance(goal, str)
+                and goal.strip()
+            ):
+                # process_tool_result reads goal and active_memory.
+                # No artifact is saved here; the isolated path uses
+                # artifact-free observation formatting.
+                processing_state = {
+                    "goal": goal.strip(),
+                    "active_memory": active_memory,
+                }
+
+                processed = await process_tool_result(
+                    state=processing_state,  # type: ignore[arg-type]
+                    tool_name=capability_name,
+                    raw_result=result,
+                    include_artifacts=False,
+                )
+
+                # Reuse the existing deterministic quality controls.
+                mutate_state(
+                    state=processing_state,  # type: ignore[arg-type]
+                    proposal=processed.memory_update,
+                )
+
+                content = (
+                    f"Capability: {capability_name}\n"
+                    f"Execution success: "
+                    f"{processed.normalized_result.execution.success}\n"
+                    f"Progress made: "
+                    f"{processed.normalized_result.execution.progress_made}\n\n"
+                    f"{processed.formatted_observation}"
+                )
+            else:
+                # Preserve visibility into results that do not fit the
+                # structured processor's input contract.
+                content = format_capability_observation(
+                    capability_name=capability_name,
+                    result=result,
+                    goal=goal,
+                )
+
             source = ObservationSource.CAPABILITY
             source_name = capability_name
             action_summary = f"CAPABILITY executed: {capability_name}"
@@ -278,6 +314,7 @@ async def execute_selected_capability(
             content=bound_observation(content),
         ),
         action_summary=action_summary[:2_000],
+        active_memory=active_memory,
     )
 
 
