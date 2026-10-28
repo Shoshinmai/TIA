@@ -1,3 +1,4 @@
+from typing import Any
 import uuid
 
 from memory.artifact import Artifact
@@ -69,3 +70,33 @@ class ArtifactStore:
             }
             for artifact in artifacts
         ]
+    def save_tool_result(
+    self,
+    *,
+    tool_name: str,
+    result: Any,
+    sequence: int,
+    action_signature: str | None = None,
+    ) -> str:
+        """Store the original tool result without replacing it with a summary."""
+        metadata = {
+            "source": "agentic_loop",
+            "tool_name": tool_name,
+            "sequence": sequence,
+        }
+
+        if action_signature:
+            metadata["action_signature"] = action_signature
+
+        if isinstance(result, dict) and "success" in result:
+            metadata["success"] = bool(result["success"])
+
+        return self.save(
+            artifact_type="tool_result",
+            summary=(
+                f"Original result from capability '{tool_name}' "
+                f"(observation {sequence})."
+            ),
+            data=result,
+            metadata=metadata,
+        )

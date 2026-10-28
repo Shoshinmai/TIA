@@ -151,7 +151,11 @@ async def agentic_loop_capability_node(state: TerminalState) -> dict:
         step.action_summary,
     ][-5:]
 
+    tool_results = list(state.get("agentic_loop_tool_results") or [])
+    tool_results.append(step.tool_result)
+
     return {
+        "agentic_loop_tool_results": tool_results,
         "agentic_loop_observations": updated_observations,
         "agentic_loop_recent_actions": updated_actions,
         "active_memory": step.active_memory,

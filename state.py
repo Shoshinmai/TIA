@@ -16,12 +16,12 @@ from models import (
     TaskContext,
     ThreadMemory,
 )
+from observer.agentic_loop_observation_models import ObservationRecord, ToolResultRecord
 from output.models import AgentOutput
 from result_processing.models import RuntimeProcessingResult
 from runtime.models import RuntimeState
 from runtime.agentic_loop_critic_models import (
     CriticConsultationState,
-    ObservationRecord,
 )
 from runtime.agentic_loop_models import AgenticLoopDecision, AgenticLoopResult
 from runtime.plan_execution_outcome import PlanExecutionOutcome
@@ -55,6 +55,7 @@ class TerminalState(TypedDict):
     # critic dialogue/advice remains separate from those observations.
     agentic_loop_decision: AgenticLoopDecision | None
     agentic_loop_observations: list[ObservationRecord]
+    agentic_loop_tool_results: list[ToolResultRecord]
     agentic_loop_critic_state: CriticConsultationState
     agentic_loop_critic_active: bool
     agentic_loop_recent_actions: list[str]

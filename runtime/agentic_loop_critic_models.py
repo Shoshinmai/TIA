@@ -5,43 +5,12 @@ from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
 
+from observer.agentic_loop_observation_models import MAX_OBSERVATIONS_PER_CONTEXT, ObservationRecord
 
-MAX_OBSERVATION_CHARS = 10_000
-MAX_OBSERVATIONS_PER_CONTEXT = 20
 MAX_DIALOGUE_SUMMARY_CHARS = 9_000
 MAX_DIALOGUE_TURN_CHARS = 9000
 MAX_RECENT_DIALOGUE_TURNS = 3
 MAX_RECENT_ACTIONS = 5
-
-
-class ObservationSource(StrEnum):
-    """Origin of a factual observation."""
-
-    CAPABILITY = "capability"
-    RUNTIME = "runtime"
-    USER = "user"
-    OTHER = "other"
-
-
-class ObservationRecord(BaseModel):
-    """A bounded record of something actually observed.
-
-    This model stores reported results, not conclusions or advice.
-    The source identifies where the observation came from.
-    """
-
-    sequence: int = Field(ge=1)
-    source: ObservationSource
-    source_name: str = Field(default="", max_length=200)
-    action_signature: str | None = Field(default=None, max_length=200)
-    content: str = Field(min_length=1, max_length=MAX_OBSERVATION_CHARS)
-
-    @model_validator(mode="after")
-    def validate_content(self) -> Self:
-        if not self.content.strip():
-            raise ValueError("Observation content must not be blank.")
-        return self
-
 
 class DialogueSpeaker(StrEnum):
     MAIN_AGENT = "main_agent"

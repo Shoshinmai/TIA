@@ -7,6 +7,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from llm.llmclient import call_nvidia
+from observer.agentic_loop_observation_models import (
+    MAX_OBSERVATION_CHARS,
+    ObservationRecord,
+    ObservationSource,
+    ResultCompleteness,
+    ToolExecutionOutcome,
+    ToolResultRecord,
+)
 from prompts.agentic_loop_critic_prompt import AGENTIC_LOOP_CRITIC_PROMPT
 from prompts.agentic_loop_prompt import AGENTIC_LOOP_PROMPT
 from result_processing.processor import process_tool_result
@@ -23,8 +31,6 @@ from runtime.agentic_loop_critic_models import (
     CriticDialogueContext,
     CriticDialogueTurn,
     DialogueSpeaker,
-    ObservationRecord,
-    ObservationSource,
     MAX_DIALOGUE_SUMMARY_CHARS,
     MAX_DIALOGUE_TURN_CHARS,
 )
@@ -54,6 +60,7 @@ _ARTIFACT_CAPABILITY_NAMES = frozenset(
 @dataclass(frozen=True, slots=True)
 class CapabilityStep:
     observation: ObservationRecord
+    tool_result: ToolResultRecord
     action_summary: str
     active_memory: Any | None = None
 
@@ -235,6 +242,8 @@ async def execute_selected_capability(
         and capability.name.strip()
     }
     capability = capability_map.get(capability_name)
+    action_signature = capability_action_signature(decision)
+    tool_result: ToolResultRecord
 
     if capability is None:
         content = (
@@ -245,9 +254,24 @@ async def execute_selected_capability(
         source = ObservationSource.RUNTIME
         source_name = "capability_dispatch"
         action_summary = f"CAPABILITY unavailable: {capability_name}"
+        tool_result = ToolResultRecord(
+            sequence=sequence,
+            tool_name=capability_name or "unknown",
+            action_signature=action_signature,
+            outcome=ToolExecutionOutcome.NOT_ATTEMPTED,
+            completeness=ResultCompleteness.UNAVAILABLE,
+        )
     else:
         try:
             result = await capability.ainvoke(decision.arguments)
+            tool_result = ToolResultRecord(
+                sequence=sequence,
+                tool_name=capability_name,
+                action_signature=action_signature,
+                outcome=ToolExecutionOutcome.RETURNED,
+                completeness=ResultCompleteness.UNKNOWN,
+                raw_result=result,
+            )
 
             if (
                 isinstance(result, dict)
@@ -304,15 +328,30 @@ async def execute_selected_capability(
             source = ObservationSource.CAPABILITY
             source_name = capability_name
             action_summary = f"CAPABILITY failed: {capability_name}"
+            tool_result = ToolResultRecord(
+                sequence=sequence,
+                tool_name=capability_name or "unknown",
+                action_signature=action_signature,
+                outcome=ToolExecutionOutcome.RAISED_EXCEPTION,
+                completeness=ResultCompleteness.UNAVAILABLE,
+                error_message=f"{type(exc).__name__}: {exc}"[:2_000],
+            )
+
+    observation_was_truncated = len(content.strip()) > MAX_OBSERVATION_CHARS
+
+    observation = ObservationRecord(
+        sequence=sequence,
+        source=source,
+        source_name=source_name[:200],
+        action_signature=action_signature,
+        content=bound_observation(content),
+        tool_result_sequence=sequence,
+        content_truncated=observation_was_truncated,
+    )
 
     return CapabilityStep(
-        observation=ObservationRecord(
-            sequence=sequence,
-            source=source,
-            source_name=source_name[:200],
-            action_signature=capability_action_signature(decision),
-            content=bound_observation(content),
-        ),
+        observation=observation,
+        tool_result=tool_result,
         action_summary=action_summary[:2_000],
         active_memory=active_memory,
     )
