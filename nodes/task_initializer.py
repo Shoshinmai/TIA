@@ -75,6 +75,7 @@ def task_initializer_node(
         # thread_memory above remains available across tasks in the same thread.
         "agentic_loop_decision": None,
         "agentic_loop_observations": [],
+        "agentic_loop_tool_results": [],
         "agentic_loop_critic_state": CriticConsultationState(),
         "agentic_loop_recent_actions": [],
         "agentic_loop_decisions_made": 0,

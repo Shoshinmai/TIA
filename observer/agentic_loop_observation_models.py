@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from enum import StrEnum
@@ -37,6 +36,12 @@ class ResultCompleteness(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
+class ToolResultStorageStatus(StrEnum):
+    NOT_APPLICABLE = "not_applicable"
+    STORED = "stored"
+    FAILED = "failed"
+
+
 class ToolResultRecord(BaseModel):
     """Source record for one capability attempt.
 
@@ -52,8 +57,12 @@ class ToolResultRecord(BaseModel):
     outcome: ToolExecutionOutcome
     completeness: ResultCompleteness = ResultCompleteness.UNKNOWN
 
-    # None is valid as a returned payload, so use outcome to distinguish
-    # a returned None from a result that was never available.
+    storage_status: ToolResultStorageStatus = ToolResultStorageStatus.NOT_APPLICABLE
+    artifact_id: str | None = Field(default=None, min_length=1)
+    storage_error: str | None = Field(default=None, max_length=2_000)
+
+    # Retain the payload in state only if storage fails, so a failed save
+    # doesn't silently discard the original result.
     raw_result: Any = None
     error_message: str | None = Field(default=None, max_length=2_000)
 
@@ -61,9 +70,7 @@ class ToolResultRecord(BaseModel):
     def validate_outcome(self) -> Self:
         if self.outcome == ToolExecutionOutcome.RAISED_EXCEPTION:
             if not self.error_message or not self.error_message.strip():
-                raise ValueError(
-                    "RAISED_EXCEPTION requires a non-empty error_message."
-                )
+                raise ValueError("RAISED_EXCEPTION requires a non-empty error_message.")
             if self.completeness != ResultCompleteness.UNAVAILABLE:
                 raise ValueError(
                     "A result unavailable because execution raised an "
@@ -82,6 +89,29 @@ class ToolResultRecord(BaseModel):
                 raise ValueError(
                     "A normally returned result must not have error_message."
                 )
+
+            if self.storage_status == ToolResultStorageStatus.STORED:
+                if not self.artifact_id:
+                    raise ValueError("STORED results require an artifact_id.")
+                if self.storage_error is not None:
+                    raise ValueError("STORED results must not have storage_error.")
+
+            elif self.storage_status == ToolResultStorageStatus.FAILED:
+                if self.artifact_id is not None:
+                    raise ValueError("A failed save must not publish an artifact_id.")
+                if not self.storage_error:
+                    raise ValueError("FAILED storage requires storage_error.")
+
+            elif self.artifact_id is not None:
+                raise ValueError("An artifact_id requires successful storage.")
+
+        else:
+            if self.storage_status != ToolResultStorageStatus.NOT_APPLICABLE:
+                raise ValueError(
+                    "Storage is not applicable when no result was returned."
+                )
+            if self.artifact_id is not None:
+                raise ValueError("A non-returned result cannot have an artifact_id.")
 
         return self
 
@@ -106,6 +136,7 @@ class ObservationRecord(BaseModel):
     # This describes truncation of the observation text, not completeness
     # of the original result.
     content_truncated: bool = False
+    artifact_id: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
     def validate_content(self) -> Self:

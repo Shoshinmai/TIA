@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from observer.agentic_loop_observation_models import ObservationRecord
 from output.models import AgentOutput, OutputType
 from runtime.agentic_loop_context import MAX_OBSERVATION_COUNT
 from runtime.agentic_loop_critic_models import (
     CriticConsultationState,
-    ObservationRecord,
 )
 from runtime.agentic_loop_critic_policy import CriticInvocationPolicy
 from runtime.agentic_loop_models import (

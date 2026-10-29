@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from llm.llmclient import call_nvidia
+from memory import artifact_store
 from observer.agentic_loop_observation_models import (
     MAX_OBSERVATION_CHARS,
     ObservationRecord,
@@ -14,6 +15,7 @@ from observer.agentic_loop_observation_models import (
     ResultCompleteness,
     ToolExecutionOutcome,
     ToolResultRecord,
+    ToolResultStorageStatus,
 )
 from prompts.agentic_loop_critic_prompt import AGENTIC_LOOP_CRITIC_PROMPT
 from prompts.agentic_loop_prompt import AGENTIC_LOOP_PROMPT
@@ -49,12 +51,6 @@ DEFAULT_AGENTIC_LOOP_CRITIC_MODEL = DEFAULT_AGENTIC_LOOP_MODEL
 
 _OBSERVATION_TRUNCATION_MARKER = "\n...[observation truncated]"
 _DIALOGUE_TRUNCATION_MARKER = "\n...[earlier dialogue truncated]"
-_ARTIFACT_CAPABILITY_NAMES = frozenset(
-    {
-        "search_artifact",
-        "read_artifact",
-    }
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,14 +90,9 @@ def bound_observation(observation: Any) -> str:
 def _agentic_loop_capabilities(
     capabilities: Sequence[Any] | None,
 ) -> list[Any]:
-    """Return capabilities permitted in the artifact-free isolated loop."""
+    """Return the capabilities available to the isolated loop."""
     available = TOOLS if capabilities is None else capabilities
-
-    return [
-        capability
-        for capability in available
-        if getattr(capability, "name", None) not in _ARTIFACT_CAPABILITY_NAMES
-    ]
+    return list(available)
 
 
 def format_capability_observation(
@@ -244,6 +235,7 @@ async def execute_selected_capability(
     capability = capability_map.get(capability_name)
     action_signature = capability_action_signature(decision)
     tool_result: ToolResultRecord
+    result_was_returned = False
 
     if capability is None:
         content = (
@@ -264,14 +256,49 @@ async def execute_selected_capability(
     else:
         try:
             result = await capability.ainvoke(decision.arguments)
-            tool_result = ToolResultRecord(
-                sequence=sequence,
-                tool_name=capability_name,
-                action_signature=action_signature,
-                outcome=ToolExecutionOutcome.RETURNED,
-                completeness=ResultCompleteness.UNKNOWN,
-                raw_result=result,
-            )
+            result_was_returned = True
+
+            # Save the original payload before processing or truncating it.
+            # Verify retrieval before publishing the artifact ID.
+            try:
+                artifact_id = artifact_store.save_tool_result(
+                    tool_name=capability_name,
+                    result=result,
+                    sequence=sequence,
+                    action_signature=action_signature,
+                )
+                stored_artifact = artifact_store.get(artifact_id)
+                if stored_artifact is None:
+                    raise RuntimeError(
+                        "ArtifactStore.save_tool_result returned an ID "
+                        "that could not be retrieved."
+                    )
+
+                tool_result = ToolResultRecord(
+                    sequence=sequence,
+                    tool_name=capability_name,
+                    action_signature=action_signature,
+                    outcome=ToolExecutionOutcome.RETURNED,
+                    completeness=ResultCompleteness.UNKNOWN,
+                    storage_status=ToolResultStorageStatus.STORED,
+                    artifact_id=artifact_id,
+                )
+
+            except Exception as storage_exc:
+                # Do not publish an artifact ID when saving or verification
+                # fails. Keep the source payload as a fallback in graph state.
+                tool_result = ToolResultRecord(
+                    sequence=sequence,
+                    tool_name=capability_name,
+                    action_signature=action_signature,
+                    outcome=ToolExecutionOutcome.RETURNED,
+                    completeness=ResultCompleteness.UNKNOWN,
+                    storage_status=ToolResultStorageStatus.FAILED,
+                    storage_error=(f"{type(storage_exc).__name__}: {storage_exc}")[
+                        :2_000
+                    ],
+                    raw_result=result,
+                )
 
             if (
                 isinstance(result, dict)
@@ -279,9 +306,6 @@ async def execute_selected_capability(
                 and isinstance(goal, str)
                 and goal.strip()
             ):
-                # process_tool_result reads goal and active_memory.
-                # No artifact is saved here; the isolated path uses
-                # artifact-free observation formatting.
                 processing_state = {
                     "goal": goal.strip(),
                     "active_memory": active_memory,
@@ -294,7 +318,6 @@ async def execute_selected_capability(
                     include_artifacts=False,
                 )
 
-                # Reuse the existing deterministic quality controls.
                 mutate_state(
                     state=processing_state,  # type: ignore[arg-type]
                     proposal=processed.memory_update,
@@ -309,8 +332,6 @@ async def execute_selected_capability(
                     f"{processed.formatted_observation}"
                 )
             else:
-                # Preserve visibility into results that do not fit the
-                # structured processor's input contract.
                 content = format_capability_observation(
                     capability_name=capability_name,
                     result=result,
@@ -320,23 +341,52 @@ async def execute_selected_capability(
             source = ObservationSource.CAPABILITY
             source_name = capability_name
             action_summary = f"CAPABILITY executed: {capability_name}"
+
         except Exception as exc:
-            content = (
-                f"Capability: {capability_name}\n"
-                f"Execution error: {type(exc).__name__}: {exc}"
-            )
             source = ObservationSource.CAPABILITY
             source_name = capability_name
-            action_summary = f"CAPABILITY failed: {capability_name}"
-            tool_result = ToolResultRecord(
-                sequence=sequence,
-                tool_name=capability_name or "unknown",
-                action_signature=action_signature,
-                outcome=ToolExecutionOutcome.RAISED_EXCEPTION,
-                completeness=ResultCompleteness.UNAVAILABLE,
-                error_message=f"{type(exc).__name__}: {exc}"[:2_000],
-            )
 
+            if result_was_returned:
+                # Execution succeeded; downstream processing failed.
+                content = (
+                    f"Capability: {capability_name}\n"
+                    "The capability returned a result, but processing "
+                    f"that result failed: {type(exc).__name__}: {exc}"
+                )
+                action_summary = (
+                    f"CAPABILITY returned; result processing failed: "
+                    f"{capability_name}"
+                )
+            else:
+                content = (
+                    f"Capability: {capability_name}\n"
+                    f"Execution error: {type(exc).__name__}: {exc}"
+                )
+                action_summary = f"CAPABILITY failed: {capability_name}"
+                tool_result = ToolResultRecord(
+                    sequence=sequence,
+                    tool_name=capability_name or "unknown",
+                    action_signature=action_signature,
+                    outcome=ToolExecutionOutcome.RAISED_EXCEPTION,
+                    completeness=ResultCompleteness.UNAVAILABLE,
+                    error_message=f"{type(exc).__name__}: {exc}"[:2_000],
+                )
+    if tool_result.storage_status == ToolResultStorageStatus.STORED:
+        content += (
+            "\n\nOriginal capability result stored successfully."
+            f"\nArtifact ID: {tool_result.artifact_id}"
+            "\nUse read_artifact or search_artifact with this ID "
+            "to retrieve the original result."
+        )
+
+    elif tool_result.storage_status == ToolResultStorageStatus.FAILED:
+        content += (
+            "\n\nWARNING: The original result could not be stored as "
+            "a retrievable artifact. No artifact ID is available."
+            "\nThe source payload is retained in the in-memory "
+            "tool-result record for this run."
+            f"\nStorage error: {tool_result.storage_error}"
+        )
     observation_was_truncated = len(content.strip()) > MAX_OBSERVATION_CHARS
 
     observation = ObservationRecord(
@@ -347,6 +397,11 @@ async def execute_selected_capability(
         content=bound_observation(content),
         tool_result_sequence=sequence,
         content_truncated=observation_was_truncated,
+        artifact_id=(
+            tool_result.artifact_id
+            if tool_result.storage_status == ToolResultStorageStatus.STORED
+            else None
+        ),
     )
 
     return CapabilityStep(
