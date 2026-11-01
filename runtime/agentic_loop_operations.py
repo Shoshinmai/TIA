@@ -216,7 +216,6 @@ async def execute_selected_capability(
     sequence: int,
     goal: str | None = None,
     active_memory: Any | None = None,
-    raw_result: Any = None
 ) -> CapabilityStep:
     """Execute one capability and return its factual observation.
 
@@ -238,6 +237,7 @@ async def execute_selected_capability(
     action_signature = capability_action_signature(decision)
     tool_result: ToolResultRecord
     result_was_returned = False
+    raw_result: Any = None
 
     if capability is None:
         content = (
