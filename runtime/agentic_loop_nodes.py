@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from observer.agentic_loop_observation_models import ObservationRecord
+from observer.agentic_loop_observation_models import ObservationRecord, ObservationSource, ToolExecutionOutcome
 from output.models import AgentOutput, OutputType
 from runtime.agentic_loop_context import MAX_OBSERVATION_COUNT
 from runtime.agentic_loop_critic_models import (
@@ -25,6 +25,7 @@ from runtime.agentic_loop_operations import (
     should_block_repeated_action,
 )
 from state import TerminalState
+from tool_analyzer.registry import resolve_tool_analyzer_family
 from tools import TOOLS
 
 MAX_AGENTIC_LOOP_DECISIONS = 20
@@ -105,7 +106,8 @@ async def agentic_loop_decision_node(state: TerminalState) -> dict:
 
 
 async def agentic_loop_capability_node(state: TerminalState) -> dict:
-    """Execute one capability unless an identical request should be blocked."""
+    """Execute one capability and retain its source result for analysis."""
+
     decision = state.get("agentic_loop_decision")
     if decision is None or decision.action != AgenticLoopAction.CAPABILITY:
         return {}
@@ -120,10 +122,12 @@ async def agentic_loop_capability_node(state: TerminalState) -> dict:
             decision,
             sequence=next_sequence,
         )
+
         updated_observations = [
             *observations,
             observation,
         ][-MAX_OBSERVATION_COUNT:]
+
         updated_actions = [
             *_recent_actions(state),
             f"CAPABILITY blocked as duplicate: {decision.capability_name}",
@@ -132,6 +136,8 @@ async def agentic_loop_capability_node(state: TerminalState) -> dict:
         return {
             "agentic_loop_observations": updated_observations,
             "agentic_loop_recent_actions": updated_actions,
+            "agentic_loop_pending_tool_result": None,
+            "agentic_loop_pending_tool_result_sequence": None,
         }
 
     step = await execute_selected_capability(
@@ -142,10 +148,6 @@ async def agentic_loop_capability_node(state: TerminalState) -> dict:
         active_memory=state.get("active_memory"),
     )
 
-    updated_observations = [
-        *observations,
-        step.observation,
-    ][-MAX_OBSERVATION_COUNT:]
     updated_actions = [
         *_recent_actions(state),
         step.action_summary,
@@ -156,11 +158,131 @@ async def agentic_loop_capability_node(state: TerminalState) -> dict:
 
     return {
         "agentic_loop_tool_results": tool_results,
-        "agentic_loop_observations": updated_observations,
         "agentic_loop_recent_actions": updated_actions,
         "active_memory": step.active_memory,
         "agentic_loop_pending_tool_result": step.raw_result,
         "agentic_loop_pending_tool_result_sequence": step.tool_result.sequence,
+    }
+    
+async def agentic_loop_tool_analyzer_node(
+    state: TerminalState,
+) -> dict:
+    """Resolve the analyzer family and publish one bounded observation.
+
+    Specialized analyzer implementations will be connected in a later step.
+    Until then, this node explicitly records that specialized analysis
+    is unavailable rather than inventing findings.
+    """
+
+    pending_sequence = state.get(
+        "agentic_loop_pending_tool_result_sequence"
+    )
+
+    if pending_sequence is None:
+        # No capability result is pending. This includes duplicate-action
+        # blocks, which already produced their own runtime observation.
+        return {}
+
+    tool_results = list(state.get("agentic_loop_tool_results") or [])
+
+    tool_result = next(
+        (
+            record
+            for record in reversed(tool_results)
+            if record.sequence == pending_sequence
+        ),
+        None,
+    )
+
+    observations = _observations(state)
+    next_sequence = (
+        max((record.sequence for record in observations), default=0) + 1
+    )
+
+    if tool_result is None:
+        content = (
+            "Tool analysis was skipped because the pending tool-result "
+            f"record for sequence {pending_sequence} could not be found. "
+            "No interpretation was produced."
+        )
+        source_name = "tool_analyzer"
+        source = ObservationSource.RUNTIME
+        tool_result_sequence = None
+        artifact_id = None
+
+    else:
+        family = resolve_tool_analyzer_family(tool_result.tool_name)
+
+        if tool_result.outcome == ToolExecutionOutcome.RAISED_EXCEPTION:
+            content = (
+                f"Capability: {tool_result.tool_name}\n"
+                "Specialized analysis was skipped because capability "
+                "execution raised an exception.\n"
+                f"Execution error: {tool_result.error_message or 'Unavailable'}"
+            )
+
+        elif tool_result.outcome == ToolExecutionOutcome.NOT_ATTEMPTED:
+            content = (
+                f"Capability: {tool_result.tool_name}\n"
+                "Specialized analysis was skipped because capability "
+                "execution was not attempted."
+            )
+
+        elif family is None:
+            content = (
+                f"Capability: {tool_result.tool_name}\n"
+                "No analyzer family is registered for this capability. "
+                "Specialized analysis was skipped."
+            )
+
+        else:
+            content = (
+                f"Capability: {tool_result.tool_name}\n"
+                f"Registered analyzer family: {family.value}\n"
+                "Specialized analysis is not implemented for this family yet. "
+                "The original result has not been interpreted or summarized "
+                "by a specialized analyzer."
+            )
+
+        source = ObservationSource.CAPABILITY
+        source_name = tool_result.tool_name
+        tool_result_sequence = tool_result.sequence
+        artifact_id = tool_result.artifact_id
+
+        if artifact_id:
+            content += (
+                "\nOriginal result is available through its stored artifact."
+                f"\nArtifact ID: {artifact_id}"
+            )
+        elif tool_result.storage_error:
+            content += (
+                "\nOriginal result storage failed. The source payload is "
+                "retained in the in-memory tool-result record."
+                f"\nStorage error: {tool_result.storage_error}"
+            )
+
+    observation = ObservationRecord(
+        sequence=next_sequence,
+        source=source,
+        source_name=source_name,
+        action_signature=(
+            tool_result.action_signature
+            if tool_result is not None
+            else None
+        ),
+        content=bound_observation(content),
+        tool_result_sequence=tool_result_sequence,
+        content_truncated=len(content) > 10_000,
+        artifact_id=artifact_id,
+    )
+
+    return {
+        "agentic_loop_observations": [
+            *observations,
+            observation,
+        ][-MAX_OBSERVATION_COUNT:],
+        "agentic_loop_pending_tool_result": None,
+        "agentic_loop_pending_tool_result_sequence": None,
     }
 
 

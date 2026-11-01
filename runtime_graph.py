@@ -33,6 +33,7 @@ from runtime.agentic_loop_nodes import (
     agentic_loop_critic_node,
     agentic_loop_decision_node,
     agentic_loop_terminal_node,
+    agentic_loop_tool_analyzer_node,
     end_agentic_loop_critic_consultation_node,
 )
 
@@ -291,6 +292,11 @@ builder.add_node(
 )
 
 builder.add_node(
+    "agentic_loop_tool_analyzer",
+    agentic_loop_tool_analyzer_node,
+)
+
+builder.add_node(
     "agentic_loop_critic",
     agentic_loop_critic_node,
 )
@@ -355,6 +361,11 @@ builder.add_conditional_edges(
 
 builder.add_edge(
     "agentic_loop_capability",
+    "agentic_loop_tool_analyzer",
+)
+
+builder.add_edge(
+    "agentic_loop_tool_analyzer",
     "agentic_loop_decision",
 )
 
