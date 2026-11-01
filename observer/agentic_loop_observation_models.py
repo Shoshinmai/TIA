@@ -68,9 +68,13 @@ class ToolResultRecord(BaseModel):
 
     @model_validator(mode="after")
     def validate_outcome(self) -> Self:
+        # 1. Validate execution outcome and its associated error/completeness.
         if self.outcome == ToolExecutionOutcome.RAISED_EXCEPTION:
             if not self.error_message or not self.error_message.strip():
-                raise ValueError("RAISED_EXCEPTION requires a non-empty error_message.")
+                raise ValueError(
+                    "RAISED_EXCEPTION requires a non-empty error_message."
+                )
+
             if self.completeness != ResultCompleteness.UNAVAILABLE:
                 raise ValueError(
                     "A result unavailable because execution raised an "
@@ -90,31 +94,57 @@ class ToolResultRecord(BaseModel):
                     "A normally returned result must not have error_message."
                 )
 
-            if self.storage_status == ToolResultStorageStatus.STORED:
-                if not self.artifact_id:
-                    raise ValueError("STORED results require an artifact_id.")
-                if self.storage_error is not None:
-                    raise ValueError("STORED results must not have storage_error.")
-
-            elif self.storage_status == ToolResultStorageStatus.FAILED:
-                if self.artifact_id is not None:
-                    raise ValueError("A failed save must not publish an artifact_id.")
-                if not self.storage_error:
-                    raise ValueError("FAILED storage requires storage_error.")
-
-            elif self.artifact_id is not None:
-                raise ValueError("An artifact_id requires successful storage.")
-
-        else:
+        # 2. Validate storage independently of execution outcome.
+        if self.outcome != ToolExecutionOutcome.RETURNED:
             if self.storage_status != ToolResultStorageStatus.NOT_APPLICABLE:
                 raise ValueError(
                     "Storage is not applicable when no result was returned."
                 )
+
             if self.artifact_id is not None:
-                raise ValueError("A non-returned result cannot have an artifact_id.")
+                raise ValueError(
+                    "A non-returned result cannot have an artifact_id."
+                )
+
+            if self.storage_error is not None:
+                raise ValueError(
+                    "A non-returned result cannot have a storage_error."
+                )
+
+        elif self.storage_status == ToolResultStorageStatus.STORED:
+            if not self.artifact_id:
+                raise ValueError("STORED results require an artifact_id.")
+
+            if self.storage_error is not None:
+                raise ValueError(
+                    "STORED results must not have storage_error."
+                )
+
+        elif self.storage_status == ToolResultStorageStatus.FAILED:
+            if self.artifact_id is not None:
+                raise ValueError(
+                    "A failed save must not publish an artifact_id."
+                )
+
+            if not self.storage_error or not self.storage_error.strip():
+                raise ValueError(
+                    "FAILED storage requires a non-empty storage_error."
+                )
+
+        else:
+            # NOT_APPLICABLE is allowed for returned results when storage
+            # was deliberately not attempted.
+            if self.artifact_id is not None:
+                raise ValueError(
+                    "An artifact_id requires successful storage."
+                )
+
+            if self.storage_error is not None:
+                raise ValueError(
+                    "storage_error requires FAILED storage status."
+                )
 
         return self
-
 
 class ObservationRecord(BaseModel):
     """Bounded account of what happened, linked to its source result if any.
