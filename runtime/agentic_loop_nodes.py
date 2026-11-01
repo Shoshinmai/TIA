@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from observer.agentic_loop_observation_models import ObservationRecord, ObservationSource, ToolExecutionOutcome
+from observer.agentic_loop_observation_models import (
+    ObservationRecord,
+    ObservationSource,
+    ToolExecutionOutcome,
+)
 from output.models import AgentOutput, OutputType
 from runtime.agentic_loop_context import MAX_OBSERVATION_COUNT
 from runtime.agentic_loop_critic_models import (
@@ -113,9 +117,7 @@ async def agentic_loop_capability_node(state: TerminalState) -> dict:
         return {}
 
     observations = _observations(state)
-    next_sequence = (
-        max((record.sequence for record in observations), default=0) + 1
-    )
+    next_sequence = max((record.sequence for record in observations), default=0) + 1
 
     if should_block_repeated_action(decision, observations):
         observation = repeated_action_observation(
@@ -158,12 +160,17 @@ async def agentic_loop_capability_node(state: TerminalState) -> dict:
 
     return {
         "agentic_loop_tool_results": tool_results,
+        "agentic_loop_observations": [
+            *observations,
+            step.observation,
+        ],
         "agentic_loop_recent_actions": updated_actions,
         "active_memory": step.active_memory,
         "agentic_loop_pending_tool_result": step.raw_result,
         "agentic_loop_pending_tool_result_sequence": step.tool_result.sequence,
     }
-    
+
+
 async def agentic_loop_tool_analyzer_node(
     state: TerminalState,
 ) -> dict:
@@ -174,9 +181,7 @@ async def agentic_loop_tool_analyzer_node(
     is unavailable rather than inventing findings.
     """
 
-    pending_sequence = state.get(
-        "agentic_loop_pending_tool_result_sequence"
-    )
+    pending_sequence = state.get("agentic_loop_pending_tool_result_sequence")
 
     if pending_sequence is None:
         # No capability result is pending. This includes duplicate-action
@@ -195,9 +200,7 @@ async def agentic_loop_tool_analyzer_node(
     )
 
     observations = _observations(state)
-    next_sequence = (
-        max((record.sequence for record in observations), default=0) + 1
-    )
+    next_sequence = max((record.sequence for record in observations), default=0) + 1
 
     if tool_result is None:
         content = (
@@ -266,9 +269,7 @@ async def agentic_loop_tool_analyzer_node(
         source=source,
         source_name=source_name,
         action_signature=(
-            tool_result.action_signature
-            if tool_result is not None
-            else None
+            tool_result.action_signature if tool_result is not None else None
         ),
         content=bound_observation(content),
         tool_result_sequence=tool_result_sequence,
@@ -336,6 +337,7 @@ def end_agentic_loop_critic_consultation_node(
         "agentic_loop_critic_active": active,
     }
 
+
 def agentic_loop_terminal_node(state: TerminalState) -> dict:
     """Persist an isolated-loop result and produce user-facing output.
 
@@ -348,9 +350,7 @@ def agentic_loop_terminal_node(state: TerminalState) -> dict:
 
     if result is None:
         decisions_made = state.get("agentic_loop_decisions_made", 0)
-        critic_responses = state.get(
-            "agentic_loop_critic_responses_received", 0
-        )
+        critic_responses = state.get("agentic_loop_critic_responses_received", 0)
 
         if decision is None:
             result = AgenticLoopResult(
