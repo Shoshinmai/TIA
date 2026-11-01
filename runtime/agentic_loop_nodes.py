@@ -159,6 +159,8 @@ async def agentic_loop_capability_node(state: TerminalState) -> dict:
         "agentic_loop_observations": updated_observations,
         "agentic_loop_recent_actions": updated_actions,
         "active_memory": step.active_memory,
+        "agentic_loop_pending_tool_result": step.raw_result,
+        "agentic_loop_pending_tool_result_sequence": step.tool_result.sequence,
     }
 
 

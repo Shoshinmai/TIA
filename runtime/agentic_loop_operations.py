@@ -59,6 +59,7 @@ class CapabilityStep:
     tool_result: ToolResultRecord
     action_summary: str
     active_memory: Any | None = None
+    raw_result: Any = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +216,7 @@ async def execute_selected_capability(
     sequence: int,
     goal: str | None = None,
     active_memory: Any | None = None,
+    raw_result: Any = None
 ) -> CapabilityStep:
     """Execute one capability and return its factual observation.
 
@@ -257,6 +259,7 @@ async def execute_selected_capability(
         try:
             result = await capability.ainvoke(decision.arguments)
             result_was_returned = True
+            raw_result = result
 
             # Save the original payload before processing or truncating it.
             # Verify retrieval before publishing the artifact ID.
@@ -409,6 +412,7 @@ async def execute_selected_capability(
         tool_result=tool_result,
         action_summary=action_summary[:2_000],
         active_memory=active_memory,
+        raw_result=raw_result,
     )
 
 

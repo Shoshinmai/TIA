@@ -76,6 +76,8 @@ def task_initializer_node(
         "agentic_loop_decision": None,
         "agentic_loop_observations": [],
         "agentic_loop_tool_results": [],
+        "agentic_loop_pending_tool_result": None,
+        "agentic_loop_pending_tool_result_sequence": None,
         "agentic_loop_critic_state": CriticConsultationState(),
         "agentic_loop_recent_actions": [],
         "agentic_loop_decisions_made": 0,
