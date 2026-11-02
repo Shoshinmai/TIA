@@ -63,7 +63,6 @@ class CriticConsultationRequest(BaseModel):
     )
     proposed_approach: str | None = Field(
         default=None,
-        max_length=2_000,
     )
     dialogue_context: CriticDialogueContext = Field(
         default_factory=CriticDialogueContext,
@@ -88,7 +87,7 @@ class CriticAdvice(BaseModel):
     interprets the advice and chooses its own next action.
     """
 
-    advice: str = Field(min_length=1, max_length=4_000)
+    advice: str = Field(min_length=1)
     uncertainty: str | None = Field(
         default=None,
         description=("What the critic is uncertain about, if anything."),

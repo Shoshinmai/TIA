@@ -252,7 +252,7 @@ async def agentic_loop_tool_analyzer_node(
         ),
         content=bound_observation(content),
         tool_result_sequence=tool_result_sequence,
-        content_truncated=len(content) > 10_000,
+        content_truncated=False,
         artifact_id=artifact_id,
     )
 

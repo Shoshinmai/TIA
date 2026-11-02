@@ -90,7 +90,7 @@ async def run_agentic_loop(
         observation_records.append(record)
 
     def remember_action(action: str) -> None:
-        recent_actions.append(action[:2_000])
+        recent_actions.append(action)
 
     while True:
         try:

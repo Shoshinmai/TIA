@@ -55,12 +55,12 @@ class ToolResultRecord(BaseModel):
 
     storage_status: ToolResultStorageStatus = ToolResultStorageStatus.NOT_APPLICABLE
     artifact_id: str | None = Field(default=None, min_length=1)
-    storage_error: str | None = Field(default=None, max_length=2_000)
+    storage_error: str | None = Field(default=None)
 
     # Retain the payload in state only if storage fails, so a failed save
     # doesn't silently discard the original result.
     raw_result: Any = None
-    error_message: str | None = Field(default=None, max_length=2_000)
+    error_message: str | None = Field(default=None)
 
     @model_validator(mode="after")
     def validate_outcome(self) -> Self:

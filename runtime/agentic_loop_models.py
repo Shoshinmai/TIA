@@ -45,7 +45,6 @@ class AgenticLoopDecision(BaseModel):
     )
     critic_observation_sequences: list[int] = Field(
         default_factory=list,
-        max_length=10,
         description=(
             "Sequence numbers of observations relevant to the critic "
             "question. Leave empty to include the recent observations."
@@ -53,7 +52,6 @@ class AgenticLoopDecision(BaseModel):
     )
     critic_proposed_approach: str | None = Field(
         default=None,
-        max_length=2_000,
         description=(
             "Optional approach the main agent wants the critic to assess."
         ),

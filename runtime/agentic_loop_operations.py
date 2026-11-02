@@ -342,7 +342,7 @@ async def execute_selected_capability(
                     action_signature=action_signature,
                     outcome=ToolExecutionOutcome.RAISED_EXCEPTION,
                     completeness=ResultCompleteness.UNAVAILABLE,
-                    error_message=f"{type(exc).__name__}: {exc}"[:2_000],
+                    error_message=f"{type(exc).__name__}: {exc}",
                 )
     if tool_result.storage_status == ToolResultStorageStatus.STORED:
         content += (
@@ -364,7 +364,7 @@ async def execute_selected_capability(
     observation = ObservationRecord(
         sequence=sequence,
         source=source,
-        source_name=source_name[:200],
+        source_name=source_name,
         action_signature=action_signature,
         content=bound_observation(content),
         tool_result_sequence=sequence,
@@ -379,7 +379,7 @@ async def execute_selected_capability(
     return CapabilityStep(
         observation=observation,
         tool_result=tool_result,
-        action_summary=action_summary[:2_000],
+        action_summary=action_summary,
         active_memory=active_memory,
         raw_result=raw_result,
     )
