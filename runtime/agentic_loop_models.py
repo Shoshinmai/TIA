@@ -132,7 +132,6 @@ class AgenticLoopStatus(StrEnum):
     FINISHED = "finished"
     COMPLEX_EXECUTION_REQUESTED = "complex_execution_requested"
     CLARIFICATION_REQUIRED = "clarification_required"
-    BUDGET_EXHAUSTED = "budget_exhausted"
     FAILED = "failed"
 
 

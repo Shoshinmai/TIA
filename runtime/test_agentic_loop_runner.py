@@ -293,10 +293,15 @@ def test_unknown_capability_is_observed_without_invocation(
     assert "not_registered" in calls[1]["prompt"]
 
 
-def test_decision_budget_exhaustion_returns_bounded_status(
+def test_loop_runs_unbounded_decisions(
     state,
     decision_queue,
 ):
+    """Verify the loop runs without a decision-count budget.
+
+    Previously, MAX_AGENTIC_LOOP_DECISIONS would cause BUDGET_EXHAUSTED.
+    Now the loop continues until a terminal action is selected.
+    """
     decisions, calls = decision_queue
     decisions.extend(
         [
@@ -308,19 +313,22 @@ def test_decision_budget_exhaustion_returns_bounded_status(
                 AgenticLoopAction.CAPABILITY,
                 capability_name="missing_tool",
             ),
+            make_decision(
+                AgenticLoopAction.FINISH,
+                final_response="Loop completed without budget limit.",
+                completion_evidence=["Work was completed."],
+            ),
         ]
     )
 
     result = run_loop(
         state,
         capabilities=[],
-        max_decisions=2,
     )
 
-    assert result.status == AgenticLoopStatus.BUDGET_EXHAUSTED
-    assert result.decisions_made == 2
-    assert len(calls) == 2
-    assert "decision budget" in result.rationale.lower()
+    assert result.status == AgenticLoopStatus.FINISHED
+    assert result.decisions_made == 3
+    assert len(calls) == 3
 
 
 def test_llm_error_returns_failed_result(state, monkeypatch):
@@ -364,14 +372,21 @@ def test_context_error_returns_failed_result(monkeypatch):
     assert "original task goal" in result.error
 
 
-@pytest.mark.parametrize("max_decisions", [0, -1, 51])
-def test_invalid_decision_budget_raises_value_error(
+def test_loop_respects_terminal_actions(
     state,
-    max_decisions,
+    decision_queue,
 ):
-    with pytest.raises(ValueError, match="max_decisions"):
-        run_loop(
-            state,
-            capabilities=[],
-            max_decisions=max_decisions,
+    """Verify the loop stops when a terminal action is selected."""
+    decisions, calls = decision_queue
+    decisions.append(
+        make_decision(
+            AgenticLoopAction.FINISH,
+            final_response="Work is complete.",
+            completion_evidence=["Done."],
         )
+    )
+
+    result = run_loop(state, capabilities=[])
+
+    assert result.status == AgenticLoopStatus.FINISHED
+    assert result.decisions_made == 1

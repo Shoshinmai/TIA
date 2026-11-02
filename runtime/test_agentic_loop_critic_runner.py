@@ -111,7 +111,9 @@ def test_consultation_returns_control_to_main_agent(state, llm_queues):
     assert "Critic consultation history and advice" in calls[2]["prompt"]
 
 
-def test_consultation_budget_blocks_an_extra_response(state, llm_queues):
+def test_consultation_proceeds_when_requested(state, llm_queues):
+    """After removing artificial budgets, consultation proceeds when the main
+    agent explicitly requests it. No response-count limits are enforced."""
     decisions, advice, calls = llm_queues
 
     decisions.extend([
@@ -125,37 +127,28 @@ def test_consultation_budget_blocks_an_extra_response(state, llm_queues):
         ),
         make_decision(
             AgenticLoopAction.FINISH,
-            final_response="The result was reported after the advice limit.",
+            final_response="The result was reported after multiple advice requests.",
         ),
     ])
     advice.append(CriticAdvice(advice="Inspect the direct caller first."))
 
-    policy = CriticInvocationPolicy(
-        max_responses_per_consultation=1,
-        max_responses_per_run=2,
-    )
-
-    result = run_loop(
-        state,
-        capabilities=[],
-        critic_policy=policy,
-    )
+    result = run_loop(state, capabilities=[])
 
     assert result.status == AgenticLoopStatus.FINISHED
     assert result.decisions_made == 3
-    assert result.critic_responses_received == 1
+    assert result.critic_responses_received == 2
 
     critic_calls = [
         call for call in calls
         if call["state_model"] is CriticAdvice
     ]
-    assert len(critic_calls) == 1
+    # Without budget limits, all explicitly requested consultations succeed
+    assert len(critic_calls) == 2
 
     main_calls = [
         call for call in calls
         if call["state_model"] is AgenticLoopDecision
     ]
-    assert "response limit has been reached" in main_calls[2]["prompt"]
 
 
 def test_critic_failure_does_not_fail_main_loop(state, llm_queues, monkeypatch):

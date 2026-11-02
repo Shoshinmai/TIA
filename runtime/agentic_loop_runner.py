@@ -3,12 +3,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from llm.llmclient import call_nvidia
 from models import ActiveTaskMemory
-from runtime.agentic_loop_context import MAX_OBSERVATION_COUNT
+from observer.agentic_loop_observation_models import ObservationSource
 from runtime.agentic_loop_critic_models import (
     CriticConsultationState,
     ObservationRecord,
-    ObservationSource,
 )
 from runtime.agentic_loop_critic_policy import CriticInvocationPolicy
 from runtime.agentic_loop_models import (
@@ -30,10 +30,6 @@ from runtime.agentic_loop_operations import (
 from tools import TOOLS
 
 
-DEFAULT_MAX_DECISIONS = 10
-MAX_ALLOWED_DECISIONS = 50
-
-
 async def run_agentic_loop(
     state: Mapping[str, Any],
     *,
@@ -42,18 +38,15 @@ async def run_agentic_loop(
     capabilities: Sequence[Any] | None = None,
     model: str = DEFAULT_AGENTIC_LOOP_MODEL,
     critic_model: str | None = None,
-    max_decisions: int = DEFAULT_MAX_DECISIONS,
-    critic_policy: CriticInvocationPolicy | None = None,
 ) -> AgenticLoopResult:
-    """Run the standalone loop using the shared single-step operations."""
-    if not 1 <= max_decisions <= MAX_ALLOWED_DECISIONS:
-        raise ValueError(
-            f"max_decisions must be between 1 and "
-            f"{MAX_ALLOWED_DECISIONS}; received {max_decisions}."
-        )
+    """Run the standalone loop using the shared single-step operations.
 
+    The loop runs unbounded until the main agent selects a terminal action
+    (FINISH, CLARIFICATION, COMPLEX_EXECUTION) or an execution failure occurs.
+    No artificial decision-count budget is imposed.
+    """
     available_capabilities = list(TOOLS if capabilities is None else capabilities)
-    policy = critic_policy or CriticInvocationPolicy()
+    policy = CriticInvocationPolicy()
     resolved_critic_model = critic_model or model
     resolved_goal = goal or _resolve_goal(state)
 
@@ -70,8 +63,9 @@ async def run_agentic_loop(
 
     working_state["active_memory"] = active_memory
 
-    seeded = [bound_observation(observation) for observation in (observations or ())]
-    observation_records = [
+    supplied_observations = observations or ()
+    seeded = [bound_observation(observation) for observation in supplied_observations]
+    observation_records: list[ObservationRecord] = [
         ObservationRecord(
             sequence=index,
             source=ObservationSource.OTHER,
@@ -79,7 +73,7 @@ async def run_agentic_loop(
             content=content,
         )
         for index, content in enumerate(seeded, start=1)
-    ][-MAX_OBSERVATION_COUNT:]
+    ]
 
     next_sequence = len(seeded) + 1
     recent_actions: list[str] = []
@@ -94,13 +88,11 @@ async def run_agentic_loop(
 
     def append_observation(record: ObservationRecord) -> None:
         observation_records.append(record)
-        del observation_records[:-MAX_OBSERVATION_COUNT]
 
     def remember_action(action: str) -> None:
         recent_actions.append(action[:2_000])
-        del recent_actions[:-5]
 
-    for _ in range(max_decisions):
+    while True:
         try:
             decision = await decide_next_action(
                 working_state,
@@ -225,17 +217,6 @@ async def run_agentic_loop(
             observations=current_observations(),
             error=f"Unsupported agentic-loop action: {decision.action!r}.",
         )
-
-    return AgenticLoopResult(
-        status=AgenticLoopStatus.BUDGET_EXHAUSTED,
-        decisions_made=decisions_made,
-        critic_responses_received=critic_responses_received,
-        rationale=(
-            "The agentic loop reached its decision budget before selecting "
-            "FINISH, CLARIFICATION, or COMPLEX_EXECUTION."
-        ),
-        observations=current_observations(),
-    )
 
 
 def _resolve_goal(state: Mapping[str, Any]) -> str:

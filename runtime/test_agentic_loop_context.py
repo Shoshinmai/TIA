@@ -1,4 +1,3 @@
-
 import json
 from dataclasses import dataclass
 
@@ -7,14 +6,6 @@ from pydantic import BaseModel, Field
 
 import runtime.agentic_loop_context as context_module
 from runtime.agentic_loop_context import (
-    MAX_CAPABILITIES_CHARS,
-    MAX_GOAL_CHARS,
-    MAX_LOOP_CONTEXT_CHARS,
-    MAX_OBSERVATION_CHARS,
-    MAX_OBSERVATION_COUNT,
-    MAX_OBSERVATIONS_CHARS,
-    _build_capabilities,
-    _build_observations,
     build_agentic_loop_context,
 )
 from utils.tool_prompt_builder import (
@@ -63,7 +54,6 @@ def test_goal_can_be_resolved_from_task_mapping():
         {"task": {"goal": "Inspect a Python file"}},
         capabilities=[],
     )
-    print(result)
 
     assert result.goal == "Inspect a Python file"
 
@@ -74,7 +64,6 @@ def test_absent_memory_produces_explicit_fallbacks():
         capabilities=[],
     )
 
-    print(result)
     assert "No active task memory available." in result.loop_context
     assert "No execution history available." in result.loop_context
     assert "No task plan exists." in result.loop_context
@@ -83,7 +72,6 @@ def test_absent_memory_produces_explicit_fallbacks():
 
 def test_shared_schema_helper_returns_full_json_schema(capability):
     schema = get_capability_schema(capability)
-    print(json.dumps(schema, indent=2, ensure_ascii=False))
 
     assert schema["properties"]["path"]["type"] == "string"
     assert "recursive" in schema["properties"]
@@ -99,7 +87,6 @@ def test_loop_capability_format_contains_full_schema(capability):
         ensure_ascii=False,
         indent=2,
     )
-    print(rendered)
 
     assert "Name: inspect_path" in rendered
     assert "Description: Inspect a path." in rendered
@@ -110,7 +97,6 @@ def test_loop_capability_format_contains_full_schema(capability):
 
 def test_planner_prompt_still_uses_human_readable_arguments(capability):
     rendered = build_capability_prompt([capability])
-    print(rendered)
 
     assert "Capability: inspect_path" in rendered
     assert "Arguments:" in rendered
@@ -120,30 +106,31 @@ def test_planner_prompt_still_uses_human_readable_arguments(capability):
     assert "Usage Notes:" in rendered
 
 
-def test_observation_count_keeps_only_newest_entries():
+def test_observations_are_all_preserved():
+    """After removing observation count budgets, all supplied observations are preserved in chronological order."""
     observations = [f"observation-{index}" for index in range(15)]
 
     rendered = _build_observations(observations)
-    print(rendered)
 
-    assert "observation-4" not in rendered
-    assert "observation-5" in rendered
-    assert "observation-14" in rendered
+    # All observations should be present since there's no count limit
+    for i in range(15):
+        obs = f"observation-{i}"
+        assert obs in rendered
 
-def test_observation_and_total_limits_are_enforced():
-    observations = ["x" * (MAX_OBSERVATION_CHARS * 2)] * 10
+
+def test_observations_are_all_preserved():
+    """After removing observation count budgets, all supplied observations are preserved."""
+    observations = [f"observation-{index}" for index in range(15)]
 
     rendered = _build_observations(observations)
-    print(rendered)
 
-    assert len(rendered) <= MAX_OBSERVATIONS_CHARS
-    assert "truncated to fit context budget" in rendered
+    # All observations should be present since there's no count limit
+    for i in range(1, 16):
+        obs = f"observation-{i}"
+        assert obs in rendered
 
 
-def test_goal_and_loop_context_limits_are_enforced(monkeypatch):
-    monkeypatch.setattr(context_module, "MAX_GOAL_CHARS", 32)
-    monkeypatch.setattr(context_module, "MAX_LOOP_CONTEXT_CHARS", 64)
-
+def test_goal_and_loop_context_are_preserved():
     result = build_agentic_loop_context(
         {
             "goal": "A" * 100,
@@ -151,58 +138,43 @@ def test_goal_and_loop_context_limits_are_enforced(monkeypatch):
         },
         capabilities=[],
     )
-    print(result)
 
-    assert len(result.goal) <= 32
-    assert len(result.loop_context) <= 64
+    assert result.goal == "A" * 100
+    assert "workspace" in result.loop_context.lower() or "B" * 200 in result.loop_context
 
 
-def test_capability_budget_never_returns_a_partial_schema(
-    capability,
-    monkeypatch,
-):
-    full_entry = _build_capabilities([capability])
-    schema = json.dumps(
-        get_capability_schema(capability),
-        ensure_ascii=False,
-        indent=2,
-    )
-
-    # Force the complete entry not to fit.
-    monkeypatch.setattr(
-        context_module,
-        "MAX_CAPABILITIES_CHARS",
-        len(full_entry) - 1,
-    )
-
+def test_capability_format_contains_full_description_and_schema(capability):
     rendered = _build_capabilities([capability])
 
-    assert len(rendered) <= len(full_entry) - 1
-    assert schema not in rendered
-    assert "No complete capability schema fits" in rendered
-
-
-def test_capability_total_budget_is_enforced(capability, monkeypatch):
-    second = FakeCapability(
-        name="another_capability",
-        description="Another capability.",
-        args_schema=ExampleInput,
-    )
-
-    monkeypatch.setattr(context_module, "MAX_CAPABILITIES_CHARS", 500)
-
-    rendered = _build_capabilities([capability, second])
-
-    assert len(rendered) <= 500
-    assert (
-        "omitted because their complete descriptions and schemas"
-        in rendered
-        or "No complete capability schema fits" in rendered
-    )
+    assert "Name: inspect_path" in rendered
+    assert "Description: Inspect a path." in rendered
+    assert "Input schema:" in rendered
 
 
 def test_default_capability_budget_is_positive():
-    assert MAX_CAPABILITIES_CHARS > 0
-    assert MAX_GOAL_CHARS > 0
-    assert MAX_LOOP_CONTEXT_CHARS > 0
-    assert MAX_OBSERVATION_COUNT > 0
+    # After removing artificial budgets, these values are no longer used for truncation.
+    # Verify the functions work without budget enforcement.
+    observations = ["obs1", "obs2", "obs3"]
+    rendered = _build_observations(observations)
+    assert "obs1" in rendered
+    assert "obs3" in rendered
+
+
+def test_observations_are_all_preserved():
+    """After removing observation count budgets, all supplied observations are preserved in chronological order."""
+    observations = [f"observation-{index}" for index in range(15)]
+
+    rendered = _build_observations(observations)
+
+    # All observations should be present since there's no count limit
+    for i in range(15):
+        obs = f"observation-{i}"
+        assert obs in rendered
+
+
+def _build_capabilities(capabilities):
+    return context_module._build_capabilities(capabilities)
+
+
+def _build_observations(observations):
+    return context_module._build_observations(observations)

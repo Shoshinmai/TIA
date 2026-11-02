@@ -6,7 +6,6 @@ from observer.agentic_loop_observation_models import (
     ToolExecutionOutcome,
 )
 from output.models import AgentOutput, OutputType
-from runtime.agentic_loop_context import MAX_OBSERVATION_COUNT
 from runtime.agentic_loop_critic_models import (
     CriticConsultationState,
 )
@@ -32,15 +31,13 @@ from state import TerminalState
 from tool_analyzer.registry import resolve_tool_analyzer_family
 from tools import TOOLS
 
-MAX_AGENTIC_LOOP_DECISIONS = 20
-
 
 def _observations(state: TerminalState) -> list[ObservationRecord]:
-    return list(state.get("agentic_loop_observations") or [])[-MAX_OBSERVATION_COUNT:]
+    return list(state.get("agentic_loop_observations") or [])
 
 
 def _recent_actions(state: TerminalState) -> list[str]:
-    return list(state.get("agentic_loop_recent_actions") or [])[-5:]
+    return list(state.get("agentic_loop_recent_actions") or [])
 
 
 def _critic_state(state: TerminalState) -> CriticConsultationState:
@@ -60,24 +57,6 @@ def _goal(state: TerminalState) -> str:
 
 async def agentic_loop_decision_node(state: TerminalState) -> dict:
     """Choose exactly one action and persist the decision."""
-
-    decisions_made = state.get("agentic_loop_decisions_made", 0)
-
-    if decisions_made >= MAX_AGENTIC_LOOP_DECISIONS:
-        return {
-            "agentic_loop_result": AgenticLoopResult(
-                status=AgenticLoopStatus.BUDGET_EXHAUSTED,
-                decisions_made=decisions_made,
-                critic_responses_received=state.get(
-                    "agentic_loop_critic_responses_received", 0
-                ),
-                rationale=(
-                    "The isolated agentic loop exhausted its decision "
-                    f"budget of {MAX_AGENTIC_LOOP_DECISIONS}."
-                ),
-                observations=[record.content for record in _observations(state)],
-            )
-        }
 
     try:
         decision = await decide_next_action(
@@ -128,12 +107,12 @@ async def agentic_loop_capability_node(state: TerminalState) -> dict:
         updated_observations = [
             *observations,
             observation,
-        ][-MAX_OBSERVATION_COUNT:]
+        ]
 
         updated_actions = [
             *_recent_actions(state),
             f"CAPABILITY blocked as duplicate: {decision.capability_name}",
-        ][-5:]
+        ]
 
         return {
             "agentic_loop_observations": updated_observations,
@@ -153,7 +132,7 @@ async def agentic_loop_capability_node(state: TerminalState) -> dict:
     updated_actions = [
         *_recent_actions(state),
         step.action_summary,
-    ][-5:]
+    ]
 
     tool_results = list(state.get("agentic_loop_tool_results") or [])
     tool_results.append(step.tool_result)
@@ -174,7 +153,7 @@ async def agentic_loop_capability_node(state: TerminalState) -> dict:
 async def agentic_loop_tool_analyzer_node(
     state: TerminalState,
 ) -> dict:
-    """Resolve the analyzer family and publish one bounded observation.
+    """Resolve the analyzer family and publish one observation.
 
     Specialized analyzer implementations will be connected in a later step.
     Until then, this node explicitly records that specialized analysis
@@ -281,14 +260,15 @@ async def agentic_loop_tool_analyzer_node(
         "agentic_loop_observations": [
             *observations,
             observation,
-        ][-MAX_OBSERVATION_COUNT:],
+        ],
         "agentic_loop_pending_tool_result": None,
         "agentic_loop_pending_tool_result_sequence": None,
     }
 
 
 async def agentic_loop_critic_node(state: TerminalState) -> dict:
-    """Consult the critic at most once for the current decision."""
+    """Consult the critic when the main agent selects CONSULT_CRITIC."""
+
     decision = state.get("agentic_loop_decision")
     if decision is None or decision.action != AgenticLoopAction.CONSULT_CRITIC:
         return {}
@@ -298,7 +278,7 @@ async def agentic_loop_critic_node(state: TerminalState) -> dict:
     recent_actions = [
         *_recent_actions(state),
         f"CONSULT_CRITIC: {decision.critic_question or ''}",
-    ][-5:]
+    ]
 
     step = await consult_critic_once(
         decision,
@@ -306,20 +286,16 @@ async def agentic_loop_critic_node(state: TerminalState) -> dict:
         observations=observations,
         recent_actions=recent_actions,
         consultation_state=critic_state,
-        responses_this_run=state.get("agentic_loop_critic_responses_received", 0),
-        consultation_active=state.get("agentic_loop_critic_active", False),
         policy=CriticInvocationPolicy(),
         critic_model=DEFAULT_AGENTIC_LOOP_CRITIC_MODEL,
     )
 
-    response_count = state.get("agentic_loop_critic_responses_received", 0)
-    if step.response_received:
-        response_count += 1
-
     return {
         "agentic_loop_critic_state": step.state,
         "agentic_loop_critic_active": step.consultation_active,
-        "agentic_loop_critic_responses_received": response_count,
+        "agentic_loop_critic_responses_received": state.get(
+            "agentic_loop_critic_responses_received", 0
+        ),
         "agentic_loop_recent_actions": recent_actions,
     }
 
@@ -402,7 +378,7 @@ def agentic_loop_terminal_node(state: TerminalState) -> dict:
                 observations=observations,
                 error=(
                     "The isolated agentic loop reached its terminal "
-                    f"node with non-terminal action {decision.action.value!r}."
+                    f"node with non-terminal action {decision.action!r}."
                 ),
             )
 
@@ -431,12 +407,11 @@ def agentic_loop_terminal_node(state: TerminalState) -> dict:
             f"Reason: {result.rationale or 'No reason was provided.'}"
         )
 
-    elif result.status == AgenticLoopStatus.BUDGET_EXHAUSTED:
-        output_type = OutputType.PARTIAL_COMPLETION
+    elif result.status == AgenticLoopStatus.FAILED:
+        output_type = OutputType.FAILED
         message = (
-            "The isolated agentic loop stopped because its decision budget "
-            "was exhausted.\n\n"
-            f"{result.rationale or 'No additional details are available.'}"
+            "The isolated agentic loop failed.\n\n"
+            f"{result.error or 'No error details are available.'}"
         )
 
     else:

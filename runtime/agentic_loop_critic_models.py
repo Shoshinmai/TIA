@@ -5,12 +5,8 @@ from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
 
-from observer.agentic_loop_observation_models import MAX_OBSERVATIONS_PER_CONTEXT, ObservationRecord
+from observer.agentic_loop_observation_models import ObservationRecord
 
-MAX_DIALOGUE_SUMMARY_CHARS = 9_000
-MAX_DIALOGUE_TURN_CHARS = 9000
-MAX_RECENT_DIALOGUE_TURNS = 3
-MAX_RECENT_ACTIONS = 5
 
 class DialogueSpeaker(StrEnum):
     MAIN_AGENT = "main_agent"
@@ -18,13 +14,10 @@ class DialogueSpeaker(StrEnum):
 
 
 class CriticDialogueTurn(BaseModel):
-    """One bounded message in the critic consultation."""
+    """One message in the critic consultation."""
 
     speaker: DialogueSpeaker
-    content: str = Field(
-        min_length=1,
-        max_length=MAX_DIALOGUE_TURN_CHARS,
-    )
+    content: str = Field(min_length=1)
 
     @model_validator(mode="after")
     def validate_content(self) -> Self:
@@ -34,19 +27,11 @@ class CriticDialogueTurn(BaseModel):
 
 
 class CriticDialogueContext(BaseModel):
-    """Bounded memory for continuing a critic consultation.
+    """Memory for continuing a critic consultation."""
 
-    Keep a compact summary of earlier turns and at most the most recent
-    exchange: one main-agent message and one critic response.
-    """
-
-    summary: str = Field(
-        default="",
-        max_length=MAX_DIALOGUE_SUMMARY_CHARS,
-    )
+    summary: str = Field(default="")
     recent_exchange: list[CriticDialogueTurn] = Field(
         default_factory=list,
-        max_length=MAX_RECENT_DIALOGUE_TURNS,
     )
 
     @model_validator(mode="after")
@@ -67,16 +52,14 @@ class CriticDialogueContext(BaseModel):
 class CriticConsultationRequest(BaseModel):
     """Information the main agent chooses to send to the critic."""
 
-    goal: str = Field(min_length=1, max_length=4_000)
-    question: str = Field(min_length=1, max_length=2_000)
+    goal: str = Field(min_length=1)
+    question: str = Field(min_length=1)
 
     relevant_observations: list[ObservationRecord] = Field(
         default_factory=list,
-        max_length=MAX_OBSERVATIONS_PER_CONTEXT,
     )
     recent_actions: list[str] = Field(
         default_factory=list,
-        max_length=MAX_RECENT_ACTIONS,
     )
     proposed_approach: str | None = Field(
         default=None,
@@ -108,14 +91,10 @@ class CriticAdvice(BaseModel):
     advice: str = Field(min_length=1, max_length=4_000)
     uncertainty: str | None = Field(
         default=None,
-        max_length=1_500,
-        description=(
-            "What the critic is uncertain about, if anything."
-        ),
+        description=("What the critic is uncertain about, if anything."),
     )
     follow_up_question: str | None = Field(
         default=None,
-        max_length=1_500,
         description=(
             "An optional question the critic needs answered to advise "
             "more accurately."
@@ -130,10 +109,7 @@ class CriticAdvice(BaseModel):
         if self.uncertainty is not None and not self.uncertainty.strip():
             self.uncertainty = None
 
-        if (
-            self.follow_up_question is not None
-            and not self.follow_up_question.strip()
-        ):
+        if self.follow_up_question is not None and not self.follow_up_question.strip():
             self.follow_up_question = None
 
         return self
@@ -142,8 +118,6 @@ class CriticAdvice(BaseModel):
 class CriticConsultationStatus(StrEnum):
     OPEN = "open"
     ENDED_BY_MAIN_AGENT = "ended_by_main_agent"
-    TURN_LIMIT_REACHED = "turn_limit_reached"
-    RUN_BUDGET_EXHAUSTED = "run_budget_exhausted"
     CRITIC_UNAVAILABLE = "critic_unavailable"
 
 
@@ -152,12 +126,8 @@ class CriticConsultationState(BaseModel):
 
     status: CriticConsultationStatus = CriticConsultationStatus.OPEN
     responses_received: int = Field(default=0, ge=0)
-    dialogue_summary: str = Field(
-        default="",
-        max_length=MAX_DIALOGUE_SUMMARY_CHARS,
-    )
+    dialogue_summary: str = Field(default="")
     recent_exchange: list[CriticDialogueTurn] = Field(
         default_factory=list,
-        max_length=MAX_RECENT_DIALOGUE_TURNS,
     )
     last_advice: CriticAdvice | None = None

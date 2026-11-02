@@ -6,10 +6,6 @@ from typing import Any, Self
 from pydantic import BaseModel, Field, model_validator
 
 
-MAX_OBSERVATION_CHARS = 10_000
-MAX_OBSERVATIONS_PER_CONTEXT = 20
-
-
 class ObservationSource(StrEnum):
     """Origin of a factual observation."""
 
@@ -146,6 +142,7 @@ class ToolResultRecord(BaseModel):
 
         return self
 
+
 class ObservationRecord(BaseModel):
     """Bounded account of what happened, linked to its source result if any.
 
@@ -157,7 +154,7 @@ class ObservationRecord(BaseModel):
     source: ObservationSource
     source_name: str = Field(default="", max_length=200)
     action_signature: str | None = Field(default=None, max_length=200)
-    content: str = Field(min_length=1, max_length=MAX_OBSERVATION_CHARS)
+    content: str = Field(min_length=1)
 
     # Links to ToolResultRecord.sequence. None is appropriate for runtime
     # events that do not originate from a capability result.

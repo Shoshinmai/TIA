@@ -9,7 +9,6 @@ from typing import Any
 from llm.llmclient import call_nvidia
 from memory import artifact_store
 from observer.agentic_loop_observation_models import (
-    MAX_OBSERVATION_CHARS,
     ObservationRecord,
     ObservationSource,
     ResultCompleteness,
@@ -21,10 +20,7 @@ from prompts.agentic_loop_critic_prompt import AGENTIC_LOOP_CRITIC_PROMPT
 from prompts.agentic_loop_prompt import AGENTIC_LOOP_PROMPT
 from result_processing.processor import process_tool_result
 from result_processing.state_mutator import mutate_state
-from runtime.agentic_loop_context import (
-    MAX_OBSERVATION_COUNT,
-    build_agentic_loop_context,
-)
+from runtime.agentic_loop_context import build_agentic_loop_context
 from runtime.agentic_loop_critic_models import (
     CriticAdvice,
     CriticConsultationRequest,
@@ -33,8 +29,6 @@ from runtime.agentic_loop_critic_models import (
     CriticDialogueContext,
     CriticDialogueTurn,
     DialogueSpeaker,
-    MAX_DIALOGUE_SUMMARY_CHARS,
-    MAX_DIALOGUE_TURN_CHARS,
 )
 from runtime.agentic_loop_critic_policy import CriticInvocationPolicy
 from runtime.agentic_loop_models import (
@@ -48,9 +42,6 @@ from utils.normalized_result_formatter import format_normalized_result
 DEFAULT_AGENTIC_LOOP_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
 # DEFAULT_AGENTIC_LOOP_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 DEFAULT_AGENTIC_LOOP_CRITIC_MODEL = DEFAULT_AGENTIC_LOOP_MODEL
-
-_OBSERVATION_TRUNCATION_MARKER = "\n...[observation truncated]"
-_DIALOGUE_TRUNCATION_MARKER = "\n...[earlier dialogue truncated]"
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,21 +62,11 @@ class CriticStep:
 
 
 def bound_observation(observation: Any) -> str:
-    """Convert an observation to bounded text for storage and prompt use."""
+    """Convert an observation to text for storage and prompt use."""
     rendered = (
         observation if isinstance(observation, str) else str(observation)
     ).strip()
-
-    from runtime.agentic_loop_context import MAX_OBSERVATION_CHARS
-
-    if len(rendered) <= MAX_OBSERVATION_CHARS:
-        return rendered or "(empty observation)"
-
-    available = max(
-        0,
-        MAX_OBSERVATION_CHARS - len(_OBSERVATION_TRUNCATION_MARKER),
-    )
-    return rendered[:available] + _OBSERVATION_TRUNCATION_MARKER
+    return rendered or "(empty observation)"
 
 
 def _agentic_loop_capabilities(
@@ -132,7 +113,7 @@ def format_critic_advice(advice: CriticAdvice) -> str:
 
 
 def render_critic_feedback(state: CriticConsultationState) -> str:
-    """Render bounded dialogue separately from factual observations."""
+    """Render dialogue separately from factual observations."""
     sections: list[str] = []
 
     if state.dialogue_summary:
@@ -147,27 +128,16 @@ def render_critic_feedback(state: CriticConsultationState) -> str:
 
 
 def append_dialogue_summary(previous: str, exchange: str) -> str:
-    """Append an exchange while keeping the summary within its contract."""
+    """Append an exchange, preserving all text."""
     combined = "\n\n".join(
         part for part in (previous.strip(), exchange.strip()) if part
     )
-
-    if len(combined) <= MAX_DIALOGUE_SUMMARY_CHARS:
-        return combined
-
-    marker = _DIALOGUE_TRUNCATION_MARKER
-    available = MAX_DIALOGUE_SUMMARY_CHARS - len(marker)
-    return marker + combined[-available:]
+    return combined
 
 
 def bound_dialogue_turn(content: str) -> str:
-    """Bound one dialogue turn to the model's configured field limit."""
-    if len(content) <= MAX_DIALOGUE_TURN_CHARS:
-        return content or "(empty dialogue turn)"
-
-    marker = "\n...[dialogue turn truncated]"
-    available = max(0, MAX_DIALOGUE_TURN_CHARS - len(marker))
-    return content[:available] + marker
+    """Return a dialogue turn without arbitrary character truncation."""
+    return content or "(empty dialogue turn)"
 
 
 async def decide_next_action(
@@ -179,7 +149,7 @@ async def decide_next_action(
     critic_feedback: str = "No critic consultation has been requested.",
     model: str = DEFAULT_AGENTIC_LOOP_MODEL,
 ) -> AgenticLoopDecision:
-    """Build bounded context and obtain exactly one structured decision."""
+    """Build context and obtain exactly one structured decision."""
     available_capabilities = _agentic_loop_capabilities(capabilities)
 
     context = build_agentic_loop_context(
@@ -390,7 +360,6 @@ async def execute_selected_capability(
             "tool-result record for this run."
             f"\nStorage error: {tool_result.storage_error}"
         )
-    observation_was_truncated = len(content.strip()) > MAX_OBSERVATION_CHARS
 
     observation = ObservationRecord(
         sequence=sequence,
@@ -399,7 +368,7 @@ async def execute_selected_capability(
         action_signature=action_signature,
         content=bound_observation(content),
         tool_result_sequence=sequence,
-        content_truncated=observation_was_truncated,
+        content_truncated=False,
         artifact_id=(
             tool_result.artifact_id
             if tool_result.storage_status == ToolResultStorageStatus.STORED
@@ -430,8 +399,9 @@ async def consult_critic_once(
 ) -> CriticStep:
     """Perform at most one critic response attempt.
 
-    A response-budget refusal is not a model call. A critic exception marks
-    the critic unavailable but does not fail the main agent's loop.
+    The critic is advisory and is invoked only when the main agent
+    explicitly requests it via CONSULT_CRITIC. No response budgets are
+    enforced.
     """
     if decision.action != AgenticLoopAction.CONSULT_CRITIC:
         raise ValueError("consult_critic_once requires a CONSULT_CRITIC decision.")
@@ -439,39 +409,6 @@ async def consult_critic_once(
     if not consultation_active:
         consultation_state = CriticConsultationState()
         consultation_active = True
-
-    exhausted_reason = policy.exhausted_reason(
-        responses_this_consultation=consultation_state.responses_received,
-        responses_this_run=responses_this_run,
-    )
-
-    if not policy.can_consult(
-        main_agent_requested=True,
-        responses_this_consultation=consultation_state.responses_received,
-        responses_this_run=responses_this_run,
-    ):
-        if exhausted_reason == "consultation_limit":
-            consultation_state.status = CriticConsultationStatus.TURN_LIMIT_REACHED
-            feedback = (
-                "The critic consultation response limit has been reached. "
-                "No additional response was requested from the critic for "
-                "this consultation. Continue using available evidence or "
-                "take another action."
-            )
-        else:
-            consultation_state.status = CriticConsultationStatus.RUN_BUDGET_EXHAUSTED
-            feedback = (
-                "The critic response budget for this run is exhausted. "
-                "No additional critic response was requested. Continue using "
-                "available evidence or take another action."
-            )
-
-        return CriticStep(
-            state=consultation_state,
-            feedback=feedback,
-            response_received=False,
-            consultation_active=consultation_active,
-        )
 
     by_sequence = {record.sequence: record for record in observations}
     if decision.critic_observation_sequences:
@@ -481,13 +418,13 @@ async def consult_critic_once(
             if sequence in by_sequence
         ]
     else:
-        selected_observations = list(observations[-MAX_OBSERVATION_COUNT:])
+        selected_observations = list(observations)
 
     request = CriticConsultationRequest(
         goal=goal,
         question=decision.critic_question or "",
         relevant_observations=selected_observations,
-        recent_actions=list(recent_actions[-5:]),
+        recent_actions=list(recent_actions),
         proposed_approach=decision.critic_proposed_approach,
         dialogue_context=CriticDialogueContext(
             summary=consultation_state.dialogue_summary,
@@ -497,8 +434,9 @@ async def consult_critic_once(
 
     main_turn = CriticDialogueTurn(
         speaker=DialogueSpeaker.MAIN_AGENT,
-        content=bound_dialogue_turn(request.question),
+        content=request.question,
     )
+
     critic_prompt = AGENTIC_LOOP_CRITIC_PROMPT.format(
         consultation_request=json.dumps(
             request.model_dump(mode="json"),
@@ -538,9 +476,10 @@ async def consult_critic_once(
     consultation_state.status = CriticConsultationStatus.OPEN
     consultation_state.last_advice = advice
 
+    critic_advice_text = format_critic_advice(advice)
     critic_turn = CriticDialogueTurn(
         speaker=DialogueSpeaker.CRITIC,
-        content=bound_dialogue_turn(format_critic_advice(advice)),
+        content=critic_advice_text,
     )
     previous_exchange = "\n".join(
         f"{turn.speaker.value}: {turn.content}"

@@ -18,24 +18,8 @@ from utils.tool_prompt_builder import (
 )
 
 
-# These are character budgets, not tokenizer-based token budgets.
-MAX_GOAL_CHARS = 4_000
-MAX_LOOP_CONTEXT_CHARS = 8_000
-MAX_CAPABILITIES_CHARS = 8_000
-MAX_OBSERVATIONS_CHARS = 6_000
-
-MAX_OBSERVATION_COUNT = 20
-MAX_OBSERVATION_CHARS = 10_000
-MAX_CAPABILITY_DESCRIPTION_CHARS = 1_000
-
-_CAPABILITY_OMISSION_MARKER = (
-    "[Some capabilities omitted because their complete descriptions "
-    "and schemas would exceed the capability context budget.]"
-)
-
-
 class AgenticLoopContext(BaseModel):
-    """Bounded, prompt-ready context for one agentic-loop decision."""
+    """Context for one agentic-loop decision."""
 
     goal: str = Field(
         min_length=1,
@@ -43,15 +27,15 @@ class AgenticLoopContext(BaseModel):
     )
     loop_context: str = Field(
         min_length=1,
-        description="Bounded summary of the current task situation.",
+        description="Summary of the current task situation.",
     )
     available_capabilities: str = Field(
         min_length=1,
-        description="Capability descriptions and complete input schemas.",
+        description="Capability descriptions and input schemas.",
     )
     observations: str = Field(
         min_length=1,
-        description="Bounded history of observed action results.",
+        description="History of observed action results.",
     )
 
 
@@ -62,7 +46,7 @@ def build_agentic_loop_context(
     *,
     goal: str | None = None,
 ) -> AgenticLoopContext:
-    """Build bounded context matching the agentic-loop prompt placeholders.
+    """Build context matching the agentic-loop prompt placeholders.
 
     This function formats existing information only. It does not execute
     capabilities, select actions, infer goal completion, or mutate state.
@@ -73,7 +57,7 @@ def build_agentic_loop_context(
     resolved_goal = _resolve_goal(state, goal)
 
     return AgenticLoopContext(
-        goal=_truncate(resolved_goal, MAX_GOAL_CHARS),
+        goal=resolved_goal,
         loop_context=_build_loop_context(state),
         available_capabilities=_build_capabilities(
             TOOLS if capabilities is None else capabilities,
@@ -195,7 +179,7 @@ def _build_loop_context(state: Mapping[str, Any]) -> str:
     if not context:
         context = "No additional task context is available."
 
-    return _truncate(context, MAX_LOOP_CONTEXT_CHARS)
+    return context
 
 
 def _format_plan_outcome(outcome: Any) -> str:
@@ -221,7 +205,7 @@ def _format_plan_outcome(outcome: Any) -> str:
 
 
 def _build_capabilities(capabilities: Sequence[Any]) -> str:
-    """Render complete capability entries within the total character budget."""
+    """Render complete capability entries."""
     entries: list[str] = []
 
     for capability in capabilities:
@@ -230,10 +214,7 @@ def _build_capabilities(capabilities: Sequence[Any]) -> str:
         if not name:
             continue
 
-        description = _truncate(
-            metadata["description"],
-            MAX_CAPABILITY_DESCRIPTION_CHARS,
-        )
+        description = metadata["description"]
         schema = get_capability_schema(capability)
 
         entry_lines = [
@@ -263,79 +244,26 @@ def _build_capabilities(capabilities: Sequence[Any]) -> str:
         return "No capabilities are available."
 
     rendered_entries: list[str] = []
-    omitted = False
 
     for entry in entries:
-        candidate_entries = rendered_entries + [entry]
-        candidate = "\n\n".join(candidate_entries)
-
-        # Reserve room for an omission marker when later entries may not fit.
-        if len(candidate) > MAX_CAPABILITIES_CHARS:
-            omitted = True
-            break
-
         rendered_entries.append(entry)
-
-    # If entries were omitted, make room for the marker without cutting any
-    # capability entry or schema.
-    if omitted:
-        while rendered_entries:
-            candidate = (
-                "\n\n".join(rendered_entries) + "\n\n" + _CAPABILITY_OMISSION_MARKER
-            )
-            if len(candidate) <= MAX_CAPABILITIES_CHARS:
-                return candidate
-            rendered_entries.pop()
-
-        # No complete capability entry fits alongside the marker.
-        return _truncate(
-            "No complete capability schema fits the configured "
-            "capability context budget.",
-            MAX_CAPABILITIES_CHARS,
-        )
 
     return "\n\n".join(rendered_entries)
 
 
 def _build_observations(observations: Sequence[str]) -> str:
-    """Prioritize the newest observations within the total context budget."""
-    recent = list(observations)[-MAX_OBSERVATION_COUNT:]
-
-    if not recent:
+    """Render all observations in chronological order."""
+    if not observations:
         return "No previous action observations."
 
-    # Select from newest to oldest, stopping when the budget is full.
-    # Then reverse the selected entries so the prompt remains chronological.
     selected: list[str] = []
 
-    for index in range(len(recent), 0, -1):
-        observation = recent[index - 1]
+    for index, observation in enumerate(observations, start=1):
         rendered = (
             observation if isinstance(observation, str) else str(observation)
         ).strip()
-        rendered = _truncate(rendered, MAX_OBSERVATION_CHARS)
         line = f"{index}. {rendered or '(empty observation)'}"
 
-        candidate = "\n".join([line, *selected])
-        if len(candidate) <= MAX_OBSERVATIONS_CHARS:
-            selected.insert(0, line)
-            continue
-
-        if not selected:
-            # The newest observation alone is larger than the total budget.
-            selected.append(_truncate(line, MAX_OBSERVATIONS_CHARS))
-        break
+        selected.append(line)
 
     return "\n".join(selected) or "No previous action observations."
-
-
-def _truncate(text: str, limit: int) -> str:
-    """Truncate text with an explicit marker when the limit is exceeded."""
-    if len(text) <= limit:
-        return text
-
-    marker = "\n...[truncated to fit context budget]"
-    if limit <= len(marker):
-        return marker[:limit]
-
-    return text[: limit - len(marker)] + marker

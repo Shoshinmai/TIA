@@ -64,14 +64,12 @@ When requesting advice:
 - Optionally describe the approach you want assessed.
 - Do not represent the critic's advice as an observed fact.
 - After receiving advice, decide whether to accept, adapt, or reject it.
-- You may request another response if the consultation is still useful and
-  the consultation budgets permit it.
-- Do not keep requesting advice after reaching a consultation limit.
+- You may request another response if the consultation is still useful.
+- Do not keep requesting advice after the consultation is no longer useful.
 
-The critic may be unavailable or a response budget may be exhausted. In that
-case, continue with available evidence when reasonable, choose a capability,
-request coordinated execution, ask the user for clarification, or finish
-with an honest account of the limitation.
+The critic may be unavailable. In that case, continue with available evidence
+when reasonable, choose a capability, request coordinated execution, ask the
+user for clarification, or finish with an honest account of the limitation.
 
 ## 4. Request coordinated execution when needed
 
@@ -108,7 +106,7 @@ Request one advisory critic response.
 Required:
 - action: CONSULT_CRITIC
 - rationale
-- critic_question: the specific question to answer
+- critic_question: the specific question to ask
 
 Optional:
 - critic_observation_sequences: positive sequence numbers of relevant
@@ -116,8 +114,8 @@ Optional:
 - critic_proposed_approach: the approach you want assessed.
 
 This action does not execute a capability and does not end the main loop.
-The runner obtains one critic response if the consultation budgets permit it,
-then returns control to you for another decision.
+The runner obtains one critic response if available, then returns control
+to you for another decision.
 
 ## COMPLEX_EXECUTION
 
