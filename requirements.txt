@@ -147,6 +147,7 @@ pytweening==1.2.0
 pywin32==312
 PyYAML==6.0.3
 pyzmq==27.1.0
+rapidfuzz==3.14.6
 regex==2026.9.29
 requests==2.34.2
 requests-toolbelt==1.0.0
