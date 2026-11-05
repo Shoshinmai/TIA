@@ -285,8 +285,9 @@ async def agentic_loop_critic_node(state: TerminalState) -> dict:
         goal=_goal(state),
         observations=observations,
         recent_actions=recent_actions,
+        consultation_active=state.get("agentic_loop_critic_active"),
         consultation_state=critic_state,
-        policy=CriticInvocationPolicy(),
+        # policy=CriticInvocationPolicy(),
         critic_model=DEFAULT_AGENTIC_LOOP_CRITIC_MODEL,
     )
 

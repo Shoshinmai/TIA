@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal
 from uuid import uuid4
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from result_processing.models import ExecutionOutcome, Fact, Resource
 
@@ -202,6 +202,206 @@ class ListDirectoryInput(BaseModel):
         ge=1,
         le=20,
         description="Maximum recursion depth when recursive=True.",
+    )
+
+
+class SearchFilesInput(BaseModel):
+    """
+    Input contract for filename and filesystem-path discovery.
+
+    Matching strategy and ranking weights are implementation
+    policies, not planner-controlled parameters.
+    """
+
+    query: str = Field(
+        min_length=1,
+        max_length=256,
+        description=(
+            "Filename or path query. Supports exact, prefix, substring, "
+            "token-based, and fuzzy matching."
+        ),
+    )
+
+    location: str = Field(
+        default="current directory",
+        min_length=1,
+        description=(
+            "Directory to search. Supports natural-language locations "
+            "such as current directory, project, desktop, downloads, "
+            "documents, and absolute or relative filesystem paths."
+        ),
+    )
+
+    recursive: bool = Field(
+        default=True,
+        description="Whether to search files in descendant directories.",
+    )
+
+    case_sensitive: bool = Field(
+        default=False,
+        description="Whether filename and path matching respects letter case.",
+    )
+
+    max_depth: int = Field(
+        default=10,
+        ge=1,
+        le=20,
+        description=(
+            "Maximum directory traversal depth. The search must report "
+            "incomplete coverage if eligible descendants remain beyond "
+            "this depth."
+        ),
+    )
+
+    max_results: int = Field(
+        default=100,
+        ge=1,
+        le=100,
+        description=(
+            "Maximum number of ranked file matches to return. "
+            "The search must retain the best matches, not simply "
+            "the first matches encountered during traversal."
+        ),
+    )
+
+    @field_validator("query")
+    @classmethod
+    def validate_query(cls, value: str) -> str:
+        normalized = value.strip()
+
+        if not normalized:
+            raise ValueError("Search query cannot be empty or whitespace.")
+
+        return normalized
+
+
+class SearchFileMatch(BaseModel):
+    """
+    One file discovered by search_files.
+
+    Score is a normalized query-relevance score between 0 and 100.
+    Match class priority remains a separate ranking dimension.
+    """
+
+    path: str = Field(
+        min_length=1,
+        description="Absolute path of the matched file.",
+    )
+
+    relative_path: str = Field(
+        min_length=1,
+        description="Path relative to the selected search root.",
+    )
+
+    match_type: Literal[
+        "exact",
+        "prefix",
+        "substring",
+        "token",
+        "fuzzy",
+    ] = Field(
+        description="Strongest matching strategy that matched this file."
+    )
+
+    matched_on: Literal[
+        "filename",
+        "relative_path",
+    ] = Field(
+        description="Whether the strongest match occurred in the filename or relative path."
+    )
+
+    score: float = Field(
+        ge=0.0,
+        le=100.0,
+        description="Normalized query-relevance score between 0 and 100.",
+    )
+
+
+class SearchFilesResult(BaseModel):
+    """
+    Structured result contract returned by search_files.
+
+    total_matches counts matches found in the portion of the
+    filesystem actually traversed. It is exact only when complete=True.
+    """
+
+    success: bool = Field(
+        description="Whether the search operation executed successfully."
+    )
+
+    query: str = Field(
+        description="The normalized search query."
+    )
+
+    root: str | None = Field(
+        default=None,
+        description="Resolved absolute search root, when available.",
+    )
+
+    matches: list[SearchFileMatch] = Field(
+        default_factory=list,
+        description="Ranked file matches, limited by max_results.",
+    )
+
+    returned_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of match objects actually returned.",
+    )
+
+    total_matches: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Number of matches found in the traversed portion of the "
+            "filesystem. This is an exact total only when complete=True."
+        ),
+    )
+
+    complete: bool = Field(
+        description=(
+            "Whether the entire eligible search space was traversed. "
+            "False when timeout, traversal errors, or a depth boundary "
+            "prevented complete coverage."
+        ),
+    )
+
+    truncated: bool = Field(
+        default=False,
+        description=(
+            "Whether results were omitted because of max_results "
+            "or traversal ended before the eligible search space "
+            "was completely inspected."
+        ),
+    )
+
+    limit_reached: Literal[
+        "max_results",
+        "traversal_timeout",
+        "max_depth",
+        "traversal_error",
+        "drive_root_gate",
+    ] | None = Field(
+        default=None,
+        description="Primary reason the search output or traversal was limited.",
+    )
+
+    traversal_errors: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Bounded descriptions of directories that could not be inspected."
+        ),
+    )
+
+    skipped_symlinks: int = Field(
+        default=0,
+        ge=0,
+        description="Number of symbolic-link entries skipped during traversal.",
+    )
+
+    error: str | None = Field(
+        default=None,
+        description="Fatal search error, when the operation could not execute.",
     )
 
 

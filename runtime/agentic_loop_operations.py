@@ -392,9 +392,9 @@ async def consult_critic_once(
     observations: Sequence[ObservationRecord],
     recent_actions: Sequence[str],
     consultation_state: CriticConsultationState,
-    responses_this_run: int,
+    # responses_this_run: int,
     consultation_active: bool,
-    policy: CriticInvocationPolicy,
+    # policy: CriticInvocationPolicy,
     critic_model: str = DEFAULT_AGENTIC_LOOP_CRITIC_MODEL,
 ) -> CriticStep:
     """Perform at most one critic response attempt.
