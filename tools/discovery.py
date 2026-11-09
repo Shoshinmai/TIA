@@ -303,6 +303,7 @@ def _search_files_sync(
                     match["score"],
                     int(match["matched_on"] == "filename"),
                     relative_path.casefold(),
+                    relative_path,
                 )
 
                 heap_item = (rank, match_data)
