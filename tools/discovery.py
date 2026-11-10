@@ -517,7 +517,7 @@ def _list_directory_sync(
 
                         candidates.append((sort_key, entry.name, is_directory))
 
-                        if len(candidates) > MAX_DIRECTORY_RESULTS:
+                        if len(candidates) >= 2 * (MAX_DIRECTORY_RESULTS + 1):
                             candidates = heapq.nsmallest(
                                 MAX_DIRECTORY_RESULTS + 1,
                                 candidates,
@@ -530,6 +530,12 @@ def _list_directory_sync(
         except OSError as exc:
             record_error(directory, exc)
 
+        if len(candidates) > MAX_DIRECTORY_RESULTS + 1:
+            candidates = heapq.nsmallest(
+                MAX_DIRECTORY_RESULTS + 1,
+                candidates,
+                key=lambda item: item[0],
+            )
         candidates.sort(key=lambda item: item[0])
         return candidates
 
@@ -618,6 +624,13 @@ def _list_directory_sync(
 
             if timeout_reached:
                 break
+
+            if len(directories) + len(files) >= MAX_DIRECTORY_RESULTS:
+                if child_entries:
+                    max_results_reached = True
+                    break
+
+                continue
 
             stack.append(
                 (
