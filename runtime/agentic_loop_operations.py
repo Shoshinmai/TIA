@@ -32,6 +32,8 @@ from runtime.agentic_loop_models import (
     AgenticLoopAction,
     AgenticLoopDecision,
 )
+from tool_analyzer.discovery import analyze_search_files_result, format_discovery_analysis
+from tool_analyzer.registry import ToolAnalyzerFamily, resolve_tool_analyzer_family
 from tools import TOOLS
 
 DEFAULT_AGENTIC_LOOP_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
@@ -94,6 +96,117 @@ def format_capability_observation(
 
     return f"Capability: {capability_name}\n" f"Returned result:\n{rendered_result}"
 
+def analyze_capability_result(
+    tool_result: ToolResultRecord | None,
+    *,
+    raw_result: Any = None,
+    fallback_sequence: int,
+) -> ObservationRecord:
+    """Create the bounded observation for a capability result.
+
+    The original source result is preserved separately in the
+    ToolResultRecord or ArtifactStore. This operation only creates
+    the representation supplied to the agent.
+    """
+    source = ObservationSource.CAPABILITY
+    source_name = "tool_analyzer"
+    tool_result_sequence = fallback_sequence
+    artifact_id = None
+    action_signature = None
+
+    if tool_result is None:
+        content = (
+            "Tool analysis was skipped because the corresponding "
+            f"tool-result record for sequence {fallback_sequence} "
+            "could not be found. No interpretation was produced."
+        )
+        source = ObservationSource.RUNTIME
+
+    else:
+        source_name = tool_result.tool_name
+        tool_result_sequence = tool_result.sequence
+        artifact_id = tool_result.artifact_id
+        action_signature = tool_result.action_signature
+
+        family = resolve_tool_analyzer_family(tool_result.tool_name)
+
+        if tool_result.outcome == ToolExecutionOutcome.RAISED_EXCEPTION:
+            content = (
+                f"Capability: {tool_result.tool_name}\n"
+                "Specialized analysis was skipped because capability "
+                "execution raised an exception.\n"
+                f"Execution error: {tool_result.error_message or 'Unavailable'}"
+            )
+
+        elif tool_result.outcome == ToolExecutionOutcome.NOT_ATTEMPTED:
+            content = (
+                f"Capability: {tool_result.tool_name}\n"
+                "Specialized analysis was skipped because capability "
+                "execution was not attempted."
+            )
+
+        elif family is None:
+            content = (
+                f"Capability: {tool_result.tool_name}\n"
+                "No analyzer family is registered for this capability. "
+                "Specialized analysis was skipped."
+            )
+
+        elif (
+            family == ToolAnalyzerFamily.DISCOVERY
+            and tool_result.tool_name == "search_files"
+        ):
+            source_result = raw_result
+            if source_result is None:
+                source_result = tool_result.raw_result
+
+            try:
+                analysis = analyze_search_files_result(
+                    source_result,
+                    source_artifact_id=artifact_id,
+                )
+                content = format_discovery_analysis(analysis)
+
+            except Exception as exc:
+                content = (
+                    f"Capability: {tool_result.tool_name}\n"
+                    "Discovery analysis failed. The original capability "
+                    "result remains preserved separately.\n"
+                    f"Analysis error: {type(exc).__name__}: {exc}"
+                )
+
+        else:
+            content = (
+                f"Capability: {tool_result.tool_name}\n"
+                f"Registered analyzer family: {family.value}\n"
+                "Specialized analysis is not implemented for this "
+                "capability yet. The original result has not been "
+                "interpreted by a specialized analyzer."
+            )
+
+        if artifact_id:
+            content += (
+                "\nOriginal result is available through its stored artifact."
+                f"\nArtifact ID: {artifact_id}"
+            )
+
+        elif tool_result.storage_error:
+            content += (
+                "\nOriginal result storage failed. The source payload is "
+                "retained in the in-memory tool-result record."
+                f"\nStorage error: {tool_result.storage_error}"
+            )
+
+    return ObservationRecord(
+        sequence=fallback_sequence,
+        source=source,
+        source_name=source_name,
+        action_signature=action_signature,
+        content=bound_observation(content),
+        tool_result_sequence=tool_result_sequence,
+        content_truncated=False,
+        artifact_id=artifact_id,
+    )
 
 def format_critic_advice(advice: CriticAdvice) -> str:
     parts = [f"Advice: {advice.advice}"]

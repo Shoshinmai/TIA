@@ -19,6 +19,7 @@ from runtime.agentic_loop_models import (
 from runtime.agentic_loop_operations import (
     DEFAULT_AGENTIC_LOOP_CRITIC_MODEL,
     DEFAULT_AGENTIC_LOOP_MODEL,
+    analyze_capability_result,
     bound_observation,
     consult_critic_once,
     decide_next_action,
@@ -124,9 +125,9 @@ async def run_agentic_loop(
                     observations=observation_records,
                     recent_actions=recent_actions,
                     consultation_state=consultation_state,
-                    responses_this_run=critic_responses_received,
+                    # responses_this_run=critic_responses_received,
                     consultation_active=consultation_active,
-                    policy=policy,
+                    # policy=policy,
                     critic_model=resolved_critic_model,
                 )
             except Exception as exc:
@@ -205,8 +206,14 @@ async def run_agentic_loop(
             )
             if step.active_memory is not None:
                 working_state["active_memory"] = step.active_memory
+            analyzed_observation = analyze_capability_result(
+                step.tool_result,
+                raw_result=step.raw_result,
+                fallback_sequence=step.observation.sequence,
+            )
+
             next_sequence += 1
-            append_observation(step.observation)
+            append_observation(analyzed_observation)
             remember_action(step.action_summary)
             continue
 
