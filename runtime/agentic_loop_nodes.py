@@ -178,10 +178,26 @@ async def agentic_loop_tool_analyzer_node(
     )
 
     observations = _observations(state)
-    next_sequence = max(
-        (record.sequence for record in observations),
-        default=0,
-    ) + 1
+
+    # Locate the provisional observation created when this capability ran.
+    # Its tool_result_sequence links it to the pending source result.
+    provisional_index = next(
+        (
+            index
+            for index, record in enumerate(observations)
+            if record.tool_result_sequence == pending_sequence
+        ),
+        None,
+    )
+
+    if provisional_index is not None:
+        observation_sequence = observations[provisional_index].sequence
+    else:
+        # Preserve a valid sequence if the provisional observation is missing.
+        observation_sequence = max(
+            (record.sequence for record in observations),
+            default=0,
+        ) + 1
 
     source = ObservationSource.CAPABILITY
     source_name = "tool_analyzer"
@@ -278,25 +294,35 @@ async def agentic_loop_tool_analyzer_node(
             )
 
     observation = ObservationRecord(
-        sequence=next_sequence,
-        source=source,
-        source_name=source_name,
-        action_signature=action_signature,
-        content=bound_observation(content),
-        tool_result_sequence=tool_result_sequence,
-        content_truncated=False,
-        artifact_id=artifact_id,
-    )
+    sequence=observation_sequence,
+    source=source,
+    source_name=source_name,
+    action_signature=action_signature,
+    content=bound_observation(content),
+    tool_result_sequence=(
+        tool_result_sequence
+        if tool_result_sequence is not None
+        else pending_sequence
+    ),
+    content_truncated=False,
+    artifact_id=artifact_id,
+)
+
+    updated_observations = list(observations)
+
+    if provisional_index is not None:
+        # Replace the raw provisional observation in place.
+        updated_observations[provisional_index] = observation
+    else:
+        # Defensive fallback: preserve the analysis even if the provisional
+        # observation was unexpectedly absent.
+        updated_observations.append(observation)
 
     return {
-        "agentic_loop_observations": [
-            *observations,
-            observation,
-        ],
+        "agentic_loop_observations": updated_observations,
         "agentic_loop_pending_tool_result": None,
         "agentic_loop_pending_tool_result_sequence": None,
     }
-
 
 async def agentic_loop_critic_node(state: TerminalState) -> dict:
     """Consult the critic when the main agent selects CONSULT_CRITIC."""
