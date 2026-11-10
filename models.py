@@ -203,6 +203,115 @@ class ListDirectoryInput(BaseModel):
         le=20,
         description="Maximum recursion depth when recursive=True.",
     )
+    
+class ListDirectoryResult(BaseModel):
+    """
+    Structured result contract returned by list_directory.
+
+    Directory and file totals count entries discovered during the
+    portion of the filesystem actually traversed. They are exact
+    only when complete=True.
+    """
+
+    success: bool = Field(
+        description="Whether the directory listing operation executed successfully."
+    )
+
+    location: str = Field(
+        description="Original location supplied to list_directory."
+    )
+
+    resolved_path: str | None = Field(
+        default=None,
+        description="Resolved absolute path of the directory, when available.",
+    )
+
+    directories: list[str] = Field(
+        default_factory=list,
+        description="Returned directory paths relative to the selected root.",
+    )
+
+    files: list[str] = Field(
+        default_factory=list,
+        description="Returned file paths relative to the selected root.",
+    )
+
+    returned_directories: int = Field(
+        default=0,
+        ge=0,
+        description="Number of directory paths actually returned.",
+    )
+
+    returned_files: int = Field(
+        default=0,
+        ge=0,
+        description="Number of file paths actually returned.",
+    )
+
+    total_directories: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Number of directories discovered in the traversed portion "
+            "of the filesystem. Exact only when complete=True."
+        ),
+    )
+
+    total_files: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Number of files discovered in the traversed portion "
+            "of the filesystem. Exact only when complete=True."
+        ),
+    )
+
+    recursive: bool = Field(
+        description="Whether descendant directories were included in traversal."
+    )
+
+    complete: bool = Field(
+        description=(
+            "Whether the entire eligible directory tree was inspected. "
+            "False when traversal was limited by the result cap, timeout, "
+            "depth boundary, or traversal errors."
+        ),
+    )
+
+    truncated: bool = Field(
+        default=False,
+        description=(
+            "Whether the returned listing is incomplete because entries "
+            "were omitted or traversal ended before full coverage."
+        ),
+    )
+
+    limit_reached: Literal[
+        "max_results",
+        "traversal_timeout",
+        "max_depth",
+        "traversal_error",
+        "drive_root_gate",
+    ] | None = Field(
+        default=None,
+        description="Primary reason the listing or traversal was limited.",
+    )
+
+    traversal_errors: list[str] = Field(
+        default_factory=list,
+        description="Bounded descriptions of directories that could not be inspected.",
+    )
+
+    skipped_symlinks: int = Field(
+        default=0,
+        ge=0,
+        description="Number of symbolic-link entries skipped during traversal.",
+    )
+
+    error: str | None = Field(
+        default=None,
+        description="Fatal error when the listing operation could not execute.",
+    )
 
 
 class SearchFilesInput(BaseModel):
