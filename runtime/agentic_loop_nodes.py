@@ -28,7 +28,8 @@ from runtime.agentic_loop_operations import (
     should_block_repeated_action,
 )
 from state import TerminalState
-from tool_analyzer.registry import resolve_tool_analyzer_family
+from tool_analyzer.discovery import analyze_search_files_result, format_discovery_analysis
+from tool_analyzer.registry import ToolAnalyzerFamily, resolve_tool_analyzer_family
 from tools import TOOLS
 
 
@@ -149,15 +150,13 @@ async def agentic_loop_capability_node(state: TerminalState) -> dict:
         "agentic_loop_pending_tool_result_sequence": step.tool_result.sequence,
     }
 
-
 async def agentic_loop_tool_analyzer_node(
     state: TerminalState,
 ) -> dict:
-    """Resolve the analyzer family and publish one observation.
+    """Analyze a pending capability result using its registered analyzer.
 
-    Specialized analyzer implementations will be connected in a later step.
-    Until then, this node explicitly records that specialized analysis
-    is unavailable rather than inventing findings.
+    Specialized analysis is currently implemented only for search_files.
+    Other registered families retain the explicit fallback observation.
     """
 
     pending_sequence = state.get("agentic_loop_pending_tool_result_sequence")
@@ -179,7 +178,16 @@ async def agentic_loop_tool_analyzer_node(
     )
 
     observations = _observations(state)
-    next_sequence = max((record.sequence for record in observations), default=0) + 1
+    next_sequence = max(
+        (record.sequence for record in observations),
+        default=0,
+    ) + 1
+
+    source = ObservationSource.CAPABILITY
+    source_name = "tool_analyzer"
+    tool_result_sequence = None
+    artifact_id = None
+    action_signature = None
 
     if tool_result is None:
         content = (
@@ -187,12 +195,14 @@ async def agentic_loop_tool_analyzer_node(
             f"record for sequence {pending_sequence} could not be found. "
             "No interpretation was produced."
         )
-        source_name = "tool_analyzer"
         source = ObservationSource.RUNTIME
-        tool_result_sequence = None
-        artifact_id = None
 
     else:
+        source_name = tool_result.tool_name
+        tool_result_sequence = tool_result.sequence
+        artifact_id = tool_result.artifact_id
+        action_signature = tool_result.action_signature
+
         family = resolve_tool_analyzer_family(tool_result.tool_name)
 
         if tool_result.outcome == ToolExecutionOutcome.RAISED_EXCEPTION:
@@ -217,25 +227,49 @@ async def agentic_loop_tool_analyzer_node(
                 "Specialized analysis was skipped."
             )
 
+        elif (
+            family == ToolAnalyzerFamily.DISCOVERY
+            and tool_result.tool_name == "search_files"
+        ):
+            raw_result = state.get("agentic_loop_pending_tool_result")
+
+            # The source payload is retained in the tool-result record
+            # when artifact storage fails. Use it as a fallback.
+            if raw_result is None:
+                raw_result = tool_result.raw_result
+
+            try:
+                analysis = analyze_search_files_result(
+                    raw_result,
+                    source_artifact_id=artifact_id,
+                )
+                content = format_discovery_analysis(analysis)
+
+            except Exception as exc:
+                # Analysis failure must not discard or misrepresent the
+                # original capability result.
+                content = (
+                    f"Capability: {tool_result.tool_name}\n"
+                    "Discovery analysis failed. The original capability "
+                    "result remains preserved separately.\n"
+                    f"Analysis error: {type(exc).__name__}: {exc}"
+                )
+
         else:
             content = (
                 f"Capability: {tool_result.tool_name}\n"
                 f"Registered analyzer family: {family.value}\n"
-                "Specialized analysis is not implemented for this family yet. "
-                "The original result has not been interpreted or summarized "
-                "by a specialized analyzer."
+                "Specialized analysis is not implemented for this "
+                "capability yet. The original result has not been "
+                "interpreted by a specialized analyzer."
             )
-
-        source = ObservationSource.CAPABILITY
-        source_name = tool_result.tool_name
-        tool_result_sequence = tool_result.sequence
-        artifact_id = tool_result.artifact_id
 
         if artifact_id:
             content += (
                 "\nOriginal result is available through its stored artifact."
                 f"\nArtifact ID: {artifact_id}"
             )
+
         elif tool_result.storage_error:
             content += (
                 "\nOriginal result storage failed. The source payload is "
@@ -247,9 +281,7 @@ async def agentic_loop_tool_analyzer_node(
         sequence=next_sequence,
         source=source,
         source_name=source_name,
-        action_signature=(
-            tool_result.action_signature if tool_result is not None else None
-        ),
+        action_signature=action_signature,
         content=bound_observation(content),
         tool_result_sequence=tool_result_sequence,
         content_truncated=False,
