@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import heapq
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -14,11 +15,12 @@ from rapidfuzz import fuzz
 
 from models import (
     ListDirectoryInput,
+    ListDirectoryResult,
     SearchContentInput,
     SearchFilesInput,
     SearchFilesResult,
 )
-from utils.filesystem_helpers import safe_walk
+from utils.filesystem_helpers import is_excluded, is_hidden, safe_walk
 from utils.location_resolver import (
     get_workspace_root,
     resolve_location,
@@ -366,6 +368,7 @@ def _search_files_sync(
         skipped_symlinks=skipped_symlinks,
     ).model_dump()
 
+
 @tool(args_schema=SearchFilesInput)
 async def search_files(
     query: str,
@@ -409,17 +412,25 @@ def _list_directory_sync(
     workspace_root: Path | None = None,
 ) -> dict:
     """
-    Synchronous implementation of list_directory with safety bounds.
+    Bounded directory listing using os.scandir().
+
+    Results are ordered deterministically within each directory.
+    At most MAX_DIRECTORY_RESULTS entries are returned across
+    files and directories combined.
     """
 
-    # Gate drive-root searches
+    def make_result(**kwargs) -> dict:
+        return ListDirectoryResult(**kwargs).model_dump()
+
     if _is_drive_root_search(location, workspace_root) and not allow_drive_root:
-        return {
-            "success": False,
-            "location": location,
-            "error": "Drive-root search not allowed. Use a specific subdirectory.",
-            "limit_reached": "drive_root_gate",
-        }
+        return make_result(
+            success=False,
+            location=location,
+            recursive=recursive,
+            complete=False,
+            limit_reached="drive_root_gate",
+            error="Drive-root search not allowed. Use a specific subdirectory.",
+        )
 
     try:
         root_path = resolve_location(
@@ -428,77 +439,240 @@ def _list_directory_sync(
             workspace_root=workspace_root,
         )
 
-    except ValueError as exc:
-        return {
-            "success": False,
-            "location": location,
-            "error": str(exc),
-        }
+        if not root_path.is_dir():
+            raise ValueError(f"Location is not a directory: {location}")
+
+        resolved_root = root_path.resolve()
+
+    except (ValueError, OSError) as exc:
+        return make_result(
+            success=False,
+            location=location,
+            recursive=recursive,
+            complete=False,
+            error=str(exc),
+        )
+
+    traversal_start = time.monotonic()
 
     directories = []
     files = []
 
     total_directories = 0
     total_files = 0
-    traversal_start = time.time()
-    timeout_reached = False
 
-    for entry in safe_walk(
-        root=root_path,
-        recursive=recursive,
-        include_hidden=include_hidden,
-        max_depth=max_depth,
-    ):
-        # Check traversal timeout
-        if time.time() - traversal_start > DEFAULT_TRAVERSAL_TIMEOUT:
+    skipped_symlinks = 0
+    traversal_errors = []
+
+    timeout_reached = False
+    depth_limit_reached = False
+    max_results_reached = False
+
+    def record_error(path: Path, exc: OSError) -> None:
+        if len(traversal_errors) < MAX_TRAVERSAL_ERRORS:
+            traversal_errors.append(f"{path}: {exc.__class__.__name__}: {exc}")
+
+    def timed_out() -> bool:
+        return time.monotonic() - traversal_start >= DEFAULT_TRAVERSAL_TIMEOUT
+
+    def collect_entries(directory: Path):
+        """
+        Collect at most MAX_DIRECTORY_RESULTS + 1 eligible entries.
+
+        heapq.nsmallest() keeps memory bounded while selecting the
+        lexicographically smallest entries. The extra entry allows
+        the caller to detect that more entries exist than the cap.
+        """
+        nonlocal skipped_symlinks
+        nonlocal timeout_reached
+
+        candidates = []
+
+        try:
+            with os.scandir(directory) as iterator:
+                for entry in iterator:
+                    if timed_out():
+                        timeout_reached = True
+                        break
+
+                    entry_path = Path(entry.path)
+
+                    try:
+                        if entry.is_symlink():
+                            skipped_symlinks += 1
+                            continue
+
+                        if not include_hidden and is_hidden(entry_path):
+                            continue
+
+                        if is_excluded(entry_path):
+                            continue
+
+                        is_directory = entry.is_dir(follow_symlinks=False)
+
+                        sort_key = (
+                            entry.name.casefold(),
+                            entry.name,
+                        )
+
+                        candidates.append((sort_key, entry.name, is_directory))
+
+                        if len(candidates) > MAX_DIRECTORY_RESULTS:
+                            candidates = heapq.nsmallest(
+                                MAX_DIRECTORY_RESULTS + 1,
+                                candidates,
+                                key=lambda item: item[0],
+                            )
+
+                    except OSError as exc:
+                        record_error(entry_path, exc)
+
+        except OSError as exc:
+            record_error(directory, exc)
+
+        candidates.sort(key=lambda item: item[0])
+        return candidates
+
+    def has_eligible_children(directory: Path) -> bool:
+        """
+        Check whether a depth-boundary directory contains at least
+        one eligible child without following symbolic links.
+        """
+        nonlocal skipped_symlinks
+        nonlocal timeout_reached
+
+        try:
+            with os.scandir(directory) as iterator:
+                for entry in iterator:
+                    if timed_out():
+                        timeout_reached = True
+                        return False
+
+                    entry_path = Path(entry.path)
+
+                    try:
+                        if entry.is_symlink():
+                            skipped_symlinks += 1
+                            continue
+
+                        if not include_hidden and is_hidden(entry_path):
+                            continue
+
+                        if is_excluded(entry_path):
+                            continue
+
+                        return True
+
+                    except OSError as exc:
+                        record_error(entry_path, exc)
+
+        except OSError as exc:
+            record_error(directory, exc)
+
+        return False
+
+    # Each stack frame contains a directory's bounded, sorted entries.
+    # The frame is resumed after a child directory has been traversed,
+    # preserving depth-first traversal.
+    stack = [(root_path, 1, iter(collect_entries(root_path)))]
+
+    while stack:
+        if timed_out():
             timeout_reached = True
             break
 
-        relative = entry.relative_to(root_path)
+        current_directory, current_depth, entries = stack[-1]
 
-        if entry.is_dir():
-            directories.append(str(relative))
+        try:
+            _, name, is_directory = next(entries)
+
+        except StopIteration:
+            stack.pop()
+            continue
+
+        entry_path = current_directory / name
+        relative_path = entry_path.relative_to(root_path).as_posix()
+
+        if is_directory:
             total_directories += 1
 
+            if len(directories) + len(files) >= MAX_DIRECTORY_RESULTS:
+                max_results_reached = True
+                break
+
+            directories.append(relative_path)
+
+            if not recursive:
+                continue
+
+            if current_depth >= max_depth:
+                if has_eligible_children(entry_path):
+                    depth_limit_reached = True
+
+                if timeout_reached:
+                    break
+
+                continue
+
+            child_entries = collect_entries(entry_path)
+
+            if timeout_reached:
+                break
+
+            stack.append(
+                (
+                    entry_path,
+                    current_depth + 1,
+                    iter(child_entries),
+                )
+            )
+
         else:
-            files.append(str(relative))
             total_files += 1
 
-    truncated = False
+            if len(directories) + len(files) >= MAX_DIRECTORY_RESULTS:
+                max_results_reached = True
+                break
+
+            files.append(relative_path)
+
+    complete = not (
+        timeout_reached
+        or depth_limit_reached
+        or traversal_errors
+        or max_results_reached
+    )
+
     limit_reached = None
 
-    if len(directories) > MAX_DIRECTORY_RESULTS:
-        directories = directories[:MAX_DIRECTORY_RESULTS]
-        truncated = True
-        limit_reached = "max_results"
-
-    remaining = MAX_DIRECTORY_RESULTS - len(directories)
-
-    if remaining < 0:
-        remaining = 0
-
-    if len(files) > remaining:
-        files = files[:remaining]
-        truncated = True
-        if limit_reached is None:
-            limit_reached = "max_results"
-
     if timeout_reached:
-        truncated = True
         limit_reached = "traversal_timeout"
+    elif max_results_reached:
+        limit_reached = "max_results"
+    elif depth_limit_reached:
+        limit_reached = "max_depth"
+    elif traversal_errors:
+        limit_reached = "traversal_error"
 
-    return {
-        "success": True,
-        "location": location,
-        "resolved_path": str(root_path),
-        "directories": directories,
-        "files": files,
-        "total_directories": total_directories,
-        "total_files": total_files,
-        "recursive": recursive,
-        "truncated": truncated,
-        "limit_reached": limit_reached,
-    }
+    truncated = not complete
+
+    return make_result(
+        success=True,
+        location=location,
+        resolved_path=str(resolved_root),
+        directories=directories,
+        files=files,
+        returned_directories=len(directories),
+        returned_files=len(files),
+        total_directories=total_directories,
+        total_files=total_files,
+        recursive=recursive,
+        complete=complete,
+        truncated=truncated,
+        limit_reached=limit_reached,
+        traversal_errors=traversal_errors,
+        skipped_symlinks=skipped_symlinks,
+    )
 
 
 @tool(args_schema=ListDirectoryInput)
@@ -515,9 +689,14 @@ async def list_directory(
     Safety bounds:
     - max_depth: Maximum recursion depth (default 2)
     - Traversal timeout: 30 seconds
+    - Maximum combined returned files and directories: 500
+    - Results are ordered deterministically within each directory
     - Default exclusions: .git, node_modules, __pycache__, venv, etc.
+    - Symbolic links are skipped and never followed
     - Drive-root searches require explicit allow_drive_root=True
-    - Results truncated at 500 entries
+
+    Returns a structured listing with completeness, truncation,
+    traversal errors, and skipped symlink information.
     """
 
     return await asyncio.to_thread(
