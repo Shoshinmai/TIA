@@ -18,8 +18,6 @@ from observer.agentic_loop_observation_models import (
 )
 from prompts.agentic_loop_critic_prompt import AGENTIC_LOOP_CRITIC_PROMPT
 from prompts.agentic_loop_prompt import AGENTIC_LOOP_PROMPT
-from result_processing.processor import process_tool_result
-from result_processing.state_mutator import mutate_state
 from runtime.agentic_loop_context import build_agentic_loop_context
 from runtime.agentic_loop_critic_models import (
     CriticAdvice,
@@ -30,14 +28,11 @@ from runtime.agentic_loop_critic_models import (
     CriticDialogueTurn,
     DialogueSpeaker,
 )
-from runtime.agentic_loop_critic_policy import CriticInvocationPolicy
 from runtime.agentic_loop_models import (
     AgenticLoopAction,
     AgenticLoopDecision,
 )
 from tools import TOOLS
-from utils.normalized_result_formatter import format_normalized_result
-
 
 DEFAULT_AGENTIC_LOOP_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
 # DEFAULT_AGENTIC_LOOP_MODEL = "nvidia/nemotron-3-super-120b-a12b"
@@ -273,43 +268,11 @@ async def execute_selected_capability(
                     raw_result=result,
                 )
 
-            if (
-                isinstance(result, dict)
-                and active_memory is not None
-                and isinstance(goal, str)
-                and goal.strip()
-            ):
-                processing_state = {
-                    "goal": goal.strip(),
-                    "active_memory": active_memory,
-                }
-
-                processed = await process_tool_result(
-                    state=processing_state,  # type: ignore[arg-type]
-                    tool_name=capability_name,
-                    raw_result=result,
-                    include_artifacts=False,
-                )
-
-                mutate_state(
-                    state=processing_state,  # type: ignore[arg-type]
-                    proposal=processed.memory_update,
-                )
-
-                content = (
-                    f"Capability: {capability_name}\n"
-                    f"Execution success: "
-                    f"{processed.normalized_result.execution.success}\n"
-                    f"Progress made: "
-                    f"{processed.normalized_result.execution.progress_made}\n\n"
-                    f"{processed.formatted_observation}"
-                )
-            else:
-                content = format_capability_observation(
-                    capability_name=capability_name,
-                    result=result,
-                    goal=goal,
-                )
+            content = format_capability_observation(
+                capability_name=capability_name,
+                result=result,
+                goal=goal,
+            )
 
             source = ObservationSource.CAPABILITY
             source_name = capability_name
