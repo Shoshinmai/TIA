@@ -203,7 +203,16 @@ class ListDirectoryInput(BaseModel):
         le=20,
         description="Maximum recursion depth when recursive=True.",
     )
-    
+
+    allow_drive_root: bool = Field(
+        default=False,
+        description=(
+            "Allow listing a filesystem drive root. "
+            "Use only when explicitly required."
+        ),
+    )
+
+
 class ListDirectoryResult(BaseModel):
     """
     Structured result contract returned by list_directory.
@@ -217,9 +226,7 @@ class ListDirectoryResult(BaseModel):
         description="Whether the directory listing operation executed successfully."
     )
 
-    location: str = Field(
-        description="Original location supplied to list_directory."
-    )
+    location: str = Field(description="Original location supplied to list_directory.")
 
     resolved_path: str | None = Field(
         default=None,
@@ -286,13 +293,16 @@ class ListDirectoryResult(BaseModel):
         ),
     )
 
-    limit_reached: Literal[
-        "max_results",
-        "traversal_timeout",
-        "max_depth",
-        "traversal_error",
-        "drive_root_gate",
-    ] | None = Field(
+    limit_reached: (
+        Literal[
+            "max_results",
+            "traversal_timeout",
+            "max_depth",
+            "traversal_error",
+            "drive_root_gate",
+        ]
+        | None
+    ) = Field(
         default=None,
         description="Primary reason the listing or traversal was limited.",
     )
@@ -408,9 +418,7 @@ class SearchFileMatch(BaseModel):
         "substring",
         "token",
         "fuzzy",
-    ] = Field(
-        description="Strongest matching strategy that matched this file."
-    )
+    ] = Field(description="Strongest matching strategy that matched this file.")
 
     matched_on: Literal[
         "filename",
@@ -438,9 +446,7 @@ class SearchFilesResult(BaseModel):
         description="Whether the search operation executed successfully."
     )
 
-    query: str = Field(
-        description="The normalized search query."
-    )
+    query: str = Field(description="The normalized search query.")
 
     root: str | None = Field(
         default=None,
@@ -484,13 +490,16 @@ class SearchFilesResult(BaseModel):
         ),
     )
 
-    limit_reached: Literal[
-        "max_results",
-        "traversal_timeout",
-        "max_depth",
-        "traversal_error",
-        "drive_root_gate",
-    ] | None = Field(
+    limit_reached: (
+        Literal[
+            "max_results",
+            "traversal_timeout",
+            "max_depth",
+            "traversal_error",
+            "drive_root_gate",
+        ]
+        | None
+    ) = Field(
         default=None,
         description="Primary reason the search output or traversal was limited.",
     )
@@ -1058,10 +1067,10 @@ class TerminalTaskInput(BaseModel):
 
 # FAKE MODEL
 
+
 class FAKE_MODEL(BaseModel):
     """
     Single planning decision produced by the planner.
     """
 
     answer: str = Field(description="response from the model.")
-    
