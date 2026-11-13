@@ -1,5 +1,6 @@
 
 from __future__ import annotations
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -121,4 +122,127 @@ class DiscoveryAnalysis(BaseModel):
     source_artifact_id: str | None = Field(
         default=None,
         description="Artifact reference to the complete original search result.",
+    )
+
+
+class DirectoryTreeEntry(BaseModel):
+    """One directory or file in a directory listing tree.
+
+    Entry IDs are scoped to one DirectoryListingAnalysis.
+    Parent references allow paths to be reconstructed without
+    repeating their complete relative paths.
+    """
+
+    id: str = Field(
+        min_length=2,
+        description="Listing-scoped identifier, such as D0 or F0.",
+    )
+
+    name: str = Field(
+        min_length=1,
+        description="Entry name relative to its parent directory.",
+    )
+
+    parent_id: str = Field(
+        min_length=1,
+        description="Parent directory ID, or ROOT for direct children.",
+    )
+
+    entry_type: Literal["directory", "file"] = Field(
+        description="Whether this entry represents a directory or file.",
+    )
+
+
+class DirectoryListingAnalysis(BaseModel):
+    """Structured representation of a list_directory result.
+
+    All paths returned by the original tool are represented.
+    The tree is an observation of returned entries, not a claim
+    that the entire filesystem hierarchy was inspected.
+    """
+
+    success: bool = Field(
+        description="Whether the original listing operation succeeded.",
+    )
+
+    root: str = Field(
+        min_length=1,
+        description="Resolved absolute path of the inspected directory.",
+    )
+
+    entries: list[DirectoryTreeEntry] = Field(
+        default_factory=list,
+        description=(
+            "Every directory and file returned by list_directory, "
+            "represented as parent-linked tree entries."
+        ),
+    )
+
+    returned_directories: int = Field(
+        default=0,
+        ge=0,
+        description="Number of directory entries returned by the tool.",
+    )
+
+    returned_files: int = Field(
+        default=0,
+        ge=0,
+        description="Number of file entries returned by the tool.",
+    )
+
+    total_directories: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Directories discovered in the traversed area. "
+            "Exact only when complete is true."
+        ),
+    )
+
+    total_files: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Files discovered in the traversed area. "
+            "Exact only when complete is true."
+        ),
+    )
+
+    recursive: bool = Field(
+        description="Whether descendant directories were included.",
+    )
+
+    complete: bool = Field(
+        description="Whether the eligible directory tree was fully inspected.",
+    )
+
+    truncated: bool = Field(
+        default=False,
+        description="Whether the original listing is incomplete.",
+    )
+
+    limit_reached: str | None = Field(
+        default=None,
+        description="Reason traversal or result collection stopped.",
+    )
+
+    traversal_errors: list[str] = Field(
+        default_factory=list,
+        description="Filesystem traversal errors reported by the tool.",
+    )
+
+    skipped_symlinks: int = Field(
+        default=0,
+        ge=0,
+        description="Number of symbolic links skipped by traversal.",
+    )
+
+    error: str | None = Field(
+        default=None,
+        description="Fatal listing error, if any.",
+    )
+
+    source_artifact_id: str | None = Field(
+        default=None,
+        description="Reference to the original unmodified listing artifact.",
     )

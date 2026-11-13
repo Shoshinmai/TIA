@@ -5,8 +5,10 @@ from collections import OrderedDict
 from pathlib import PurePosixPath
 from typing import Any
 
-from models import SearchFilesResult
+from models import ListDirectoryResult, SearchFilesResult
 from tool_analyzer.discovery_models import (
+    DirectoryListingAnalysis,
+    DirectoryTreeEntry,
     DiscoveryAnalysis,
     DiscoveryDirectoryGroup,
 )
@@ -159,6 +161,230 @@ def format_discovery_analysis(
         lines.append(
             "Original result artifact: "
             f"{analysis.source_artifact_id}"
+        )
+
+    return "\n".join(lines)
+
+
+def analyze_list_directory_result(
+    raw_result: Any,
+    *,
+    source_artifact_id: str | None = None,
+) -> DirectoryListingAnalysis:
+    """Build a complete parent-linked representation of list_directory output.
+
+    Every returned path is represented. No ranking, sampling, or
+    disclosure limit is applied.
+
+    The original result is never modified.
+    """
+
+    result = ListDirectoryResult.model_validate(raw_result)
+
+    if result.returned_directories != len(result.directories):
+        raise ValueError(
+            "Invalid list_directory result: returned_directories "
+            f"({result.returned_directories}) does not match the number "
+            f"of returned directories ({len(result.directories)})."
+        )
+
+    if result.returned_files != len(result.files):
+        raise ValueError(
+            "Invalid list_directory result: returned_files "
+            f"({result.returned_files}) does not match the number "
+            f"of returned files ({len(result.files)})."
+        )
+
+    root = result.resolved_path
+    if not root:
+        raise ValueError(
+            "Cannot analyze list_directory result without resolved_path."
+        )
+
+    entries: list[DirectoryTreeEntry] = []
+    directory_ids: dict[str, str] = {}
+
+    def parse_relative_path(path: str) -> PurePosixPath:
+        relative = PurePosixPath(path)
+
+        if (
+            not path
+            or relative.is_absolute()
+            or ".." in relative.parts
+            or not relative.parts
+            or relative == PurePosixPath(".")
+        ):
+            raise ValueError(
+                f"Invalid relative path in list_directory result: {path!r}"
+            )
+
+        return relative
+
+    # ----------------------------------------------------------
+    # Directories
+    # ----------------------------------------------------------
+
+    for directory in result.directories:
+        relative = parse_relative_path(directory)
+        parent_path = relative.parent.as_posix()
+
+        if parent_path == ".":
+            parent_id = "ROOT"
+        else:
+            parent_id = directory_ids.get(parent_path)
+
+            if parent_id is None:
+                raise ValueError(
+                    "Invalid list_directory hierarchy: parent directory "
+                    f"{parent_path!r} was not returned before "
+                    f"child directory {directory!r}."
+                )
+
+        entry_id = f"D{len(directory_ids)}"
+
+        entries.append(
+            DirectoryTreeEntry(
+                id=entry_id,
+                name=relative.name,
+                parent_id=parent_id,
+                entry_type="directory",
+            )
+        )
+
+        directory_ids[relative.as_posix()] = entry_id
+
+    # ----------------------------------------------------------
+    # Files
+    # ----------------------------------------------------------
+
+    for file in result.files:
+        relative = parse_relative_path(file)
+        parent_path = relative.parent.as_posix()
+
+        if parent_path == ".":
+            parent_id = "ROOT"
+        else:
+            parent_id = directory_ids.get(parent_path)
+
+            if parent_id is None:
+                raise ValueError(
+                    "Invalid list_directory hierarchy: parent directory "
+                    f"{parent_path!r} was not returned for file {file!r}."
+                )
+
+        entry_id = f"F{sum(
+            entry.entry_type == "file" for entry in entries
+        )}"
+
+        entries.append(
+            DirectoryTreeEntry(
+                id=entry_id,
+                name=relative.name,
+                parent_id=parent_id,
+                entry_type="file",
+            )
+        )
+
+    return DirectoryListingAnalysis(
+        success=result.success,
+        root=root,
+        entries=entries,
+        returned_directories=result.returned_directories,
+        returned_files=result.returned_files,
+        total_directories=result.total_directories,
+        total_files=result.total_files,
+        recursive=result.recursive,
+        complete=result.complete,
+        truncated=result.truncated,
+        limit_reached=result.limit_reached,
+        traversal_errors=result.traversal_errors,
+        skipped_symlinks=result.skipped_symlinks,
+        error=result.error,
+        source_artifact_id=source_artifact_id,
+    )
+
+
+def format_list_directory_analysis(
+    analysis: DirectoryListingAnalysis,
+) -> str:
+    """Render the complete directory tree as a compact Main Agent observation."""
+
+    lines = [
+        "Discovery analysis: list_directory",
+        f"Root: {analysis.root}",
+        f"Listing success: {analysis.success}",
+        "",
+        "DIRECTORY TREE",
+        "ROOT",
+    ]
+
+    for entry in analysis.entries:
+        lines.append(
+            f"{entry.id} <- {entry.parent_id}: {entry.name}"
+        )
+
+    lines.extend(
+        [
+            "",
+            "LISTING SUMMARY",
+            f"Returned directories: {analysis.returned_directories}",
+            f"Returned files: {analysis.returned_files}",
+            f"Returned entries: {len(analysis.entries)}",
+            f"Recursive: {analysis.recursive}",
+        ]
+    )
+
+    if analysis.complete:
+        lines.extend(
+            [
+                "Coverage: complete",
+                f"Total directories: {analysis.total_directories}",
+                f"Total files: {analysis.total_files}",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "Coverage: INCOMPLETE",
+                (
+                    "Directories discovered in traversed area: "
+                    f"{analysis.total_directories} (not an exact total)"
+                ),
+                (
+                    "Files discovered in traversed area: "
+                    f"{analysis.total_files} (not an exact total)"
+                ),
+                (
+                    "WARNING: Do not assume that entries absent from "
+                    "this tree do not exist."
+                ),
+            ]
+        )
+
+    if analysis.truncated:
+        lines.append("Listing was truncated.")
+
+    if analysis.limit_reached:
+        lines.append(f"Stopping reason: {analysis.limit_reached}")
+
+    if analysis.error:
+        lines.append(f"Listing error: {analysis.error}")
+
+    if analysis.traversal_errors:
+        lines.append("")
+        lines.append("TRAVERSAL ERRORS")
+        lines.extend(
+            f"- {error}" for error in analysis.traversal_errors
+        )
+
+    if analysis.skipped_symlinks:
+        lines.append(
+            f"Skipped symbolic links: {analysis.skipped_symlinks}"
+        )
+
+    if analysis.source_artifact_id:
+        lines.append(
+            f"Original result artifact: {analysis.source_artifact_id}"
         )
 
     return "\n".join(lines)
