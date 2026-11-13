@@ -153,7 +153,6 @@ def format_discovery_analysis(
 
     return "\n".join(lines)
 
-
 def analyze_list_directory_result(
     raw_result: Any,
     *,

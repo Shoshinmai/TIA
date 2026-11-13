@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 from typing import Literal
 
@@ -39,9 +38,7 @@ class DiscoveryAnalysis(BaseModel):
         description="Whether the original search operation succeeded."
     )
 
-    query: str = Field(
-        description="Original normalized search query."
-    )
+    query: str = Field(description="Original normalized search query.")
 
     root: str | None = Field(
         default=None,
@@ -75,9 +72,7 @@ class DiscoveryAnalysis(BaseModel):
     undisclosed_returned_count: int = Field(
         default=0,
         ge=0,
-        description=(
-            "Number of returned matches not included in disclosed_paths."
-        ),
+        description=("Number of returned matches not included in disclosed_paths."),
     )
 
     total_matches: int = Field(
@@ -94,13 +89,11 @@ class DiscoveryAnalysis(BaseModel):
     )
 
     truncated: bool = Field(
-        default=False,
-        description="Whether the original search result was truncated."
+        default=False, description="Whether the original search result was truncated."
     )
 
     limit_reached: str | None = Field(
-        default=None,
-        description="Original search limit or traversal stopping reason."
+        default=None, description="Original search limit or traversal stopping reason."
     )
 
     traversal_errors: list[str] = Field(
@@ -166,9 +159,9 @@ class DirectoryListingAnalysis(BaseModel):
     )
 
     root: str | None = Field(
-    default=None,
-    description="Resolved absolute path of the inspected directory, when available.",
-)
+        default=None,
+        description="Resolved absolute path of the inspected directory, when available.",
+    )
 
     entries: list[DirectoryTreeEntry] = Field(
         default_factory=list,

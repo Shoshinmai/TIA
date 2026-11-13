@@ -32,7 +32,12 @@ from runtime.agentic_loop_models import (
     AgenticLoopAction,
     AgenticLoopDecision,
 )
-from tool_analyzer.discovery import analyze_list_directory_result, analyze_search_files_result, format_discovery_analysis, format_list_directory_analysis
+from tool_analyzer.discovery import (
+    analyze_list_directory_result,
+    analyze_search_files_result,
+    format_discovery_analysis,
+    format_list_directory_analysis,
+)
 from tool_analyzer.registry import ToolAnalyzerFamily, resolve_tool_analyzer_family
 from tools import TOOLS
 
@@ -102,12 +107,8 @@ def analyze_capability_result(
     raw_result: Any = None,
     fallback_sequence: int,
 ) -> ObservationRecord:
-    """Create the bounded observation for a capability result.
+    """Analyze a capability result, falling back to its original payload."""
 
-    The original source result is preserved separately in the
-    ToolResultRecord or ArtifactStore. This operation only creates
-    the representation supplied to the agent.
-    """
     source = ObservationSource.CAPABILITY
     source_name = "tool_analyzer"
     tool_result_sequence = fallback_sequence
@@ -115,11 +116,22 @@ def analyze_capability_result(
     action_signature = None
 
     if tool_result is None:
-        content = (
-            "Tool analysis was skipped because the corresponding "
-            f"tool-result record for sequence {fallback_sequence} "
-            "could not be found. No interpretation was produced."
-        )
+        if raw_result is not None:
+            content = format_raw_tool_result_fallback(
+                capability_name="unknown",
+                raw_result=raw_result,
+                reason=(
+                    "The corresponding tool-result record could not "
+                    "be found, so specialized analysis was skipped."
+                ),
+            )
+        else:
+            content = (
+                "Tool analysis was skipped because the corresponding "
+                f"tool-result record for sequence {fallback_sequence} "
+                "could not be found. No raw result is available."
+            )
+
         source = ObservationSource.RUNTIME
 
     else:
@@ -128,38 +140,72 @@ def analyze_capability_result(
         artifact_id = tool_result.artifact_id
         action_signature = tool_result.action_signature
 
+        # Recover the original result from the best available source.
+        source_result = raw_result
+
+        if source_result is None:
+            source_result = tool_result.raw_result
+
+        if source_result is None and artifact_id:
+            stored_artifact = artifact_store.get(artifact_id)
+
+            if stored_artifact is not None:
+                source_result = stored_artifact.data
+
         family = resolve_tool_analyzer_family(tool_result.tool_name)
 
         if tool_result.outcome == ToolExecutionOutcome.RAISED_EXCEPTION:
-            content = (
-                f"Capability: {tool_result.tool_name}\n"
-                "Specialized analysis was skipped because capability "
-                "execution raised an exception.\n"
-                f"Execution error: {tool_result.error_message or 'Unavailable'}"
+            reason = (
+                "Capability execution raised an exception. "
+                f"Execution error: "
+                f"{tool_result.error_message or 'Unavailable'}"
             )
+
+            if source_result is not None:
+                content = format_raw_tool_result_fallback(
+                    capability_name=tool_result.tool_name,
+                    raw_result=source_result,
+                    reason=reason,
+                )
+            else:
+                content = (
+                    f"Capability: {tool_result.tool_name}\n"
+                    "Specialized analysis was skipped because "
+                    "capability execution raised an exception.\n"
+                    f"Execution error: "
+                    f"{tool_result.error_message or 'Unavailable'}"
+                )
 
         elif tool_result.outcome == ToolExecutionOutcome.NOT_ATTEMPTED:
-            content = (
-                f"Capability: {tool_result.tool_name}\n"
-                "Specialized analysis was skipped because capability "
-                "execution was not attempted."
+            reason = (
+                "Capability execution was not attempted. "
+                "No tool result was produced."
             )
 
+            if source_result is not None:
+                content = format_raw_tool_result_fallback(
+                    capability_name=tool_result.tool_name,
+                    raw_result=source_result,
+                    reason=reason,
+                )
+            else:
+                content = (
+                    f"Capability: {tool_result.tool_name}\n"
+                    "Specialized analysis was skipped because capability "
+                    "execution was not attempted. No raw result exists."
+                )
+
         elif family is None:
-            content = (
-                f"Capability: {tool_result.tool_name}\n"
-                "No analyzer family is registered for this capability. "
-                "Specialized analysis was skipped."
+            content = format_raw_tool_result_fallback(
+                capability_name=tool_result.tool_name,
+                raw_result=source_result,
+                reason=("No analyzer family is registered for this capability."),
             )
 
         elif (
             family == ToolAnalyzerFamily.DISCOVERY
             and tool_result.tool_name == "search_files"
         ):
-            source_result = raw_result
-            if source_result is None:
-                source_result = tool_result.raw_result
-
             try:
                 analysis = analyze_search_files_result(
                     source_result,
@@ -168,21 +214,19 @@ def analyze_capability_result(
                 content = format_discovery_analysis(analysis)
 
             except Exception as exc:
-                content = (
-                    f"Capability: {tool_result.tool_name}\n"
-                    "Discovery analysis failed. The original capability "
-                    "result remains preserved separately.\n"
-                    f"Analysis error: {type(exc).__name__}: {exc}"
+                content = format_raw_tool_result_fallback(
+                    capability_name=tool_result.tool_name,
+                    raw_result=source_result,
+                    reason=(
+                        "search_files discovery analysis failed: "
+                        f"{type(exc).__name__}: {exc}"
+                    ),
                 )
-        
+
         elif (
             family == ToolAnalyzerFamily.DISCOVERY
             and tool_result.tool_name == "list_directory"
         ):
-            source_result = raw_result
-            if source_result is None:
-                source_result = tool_result.raw_result
-
             try:
                 analysis = analyze_list_directory_result(
                     source_result,
@@ -191,26 +235,29 @@ def analyze_capability_result(
                 content = format_list_directory_analysis(analysis)
 
             except Exception as exc:
-                content = (
-                    f"Capability: {tool_result.tool_name}\n"
-                    "Directory-listing analysis failed. The original "
-                    "capability result remains preserved separately.\n"
-                    f"Analysis error: {type(exc).__name__}: {exc}"
+                content = format_raw_tool_result_fallback(
+                    capability_name=tool_result.tool_name,
+                    raw_result=source_result,
+                    reason=(
+                        "list_directory analysis failed: "
+                        f"{type(exc).__name__}: {exc}"
+                    ),
                 )
 
-
         else:
-            content = (
-                f"Capability: {tool_result.tool_name}\n"
-                f"Registered analyzer family: {family.value}\n"
-                "Specialized analysis is not implemented for this "
-                "capability yet. The original result has not been "
-                "interpreted by a specialized analyzer."
+            content = format_raw_tool_result_fallback(
+                capability_name=tool_result.tool_name,
+                raw_result=source_result,
+                reason=(
+                    f"Analyzer family '{family.value}' is registered, "
+                    "but specialized analysis has not been implemented "
+                    "for this capability."
+                ),
             )
 
         if artifact_id:
             content += (
-                "\nOriginal result is available through its stored artifact."
+                "\n\nOriginal result is available through its stored artifact."
                 f"\nArtifact ID: {artifact_id}"
             )
 
@@ -231,6 +278,45 @@ def analyze_capability_result(
         content_truncated=False,
         artifact_id=artifact_id,
     )
+
+
+def format_raw_tool_result_fallback(
+    *,
+    capability_name: str,
+    raw_result: Any,
+    reason: str,
+) -> str:
+    """Preserve the raw capability result when specialized analysis fails."""
+
+    if raw_result is None:
+        rendered_result = (
+            "Raw tool result is unavailable. No returned payload " "could be recovered."
+        )
+    elif isinstance(raw_result, str):
+        rendered_result = raw_result
+    else:
+        try:
+            rendered_result = json.dumps(
+                raw_result,
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+        except (TypeError, ValueError):
+            rendered_result = str(raw_result)
+
+    return (
+        f"Capability: {capability_name}\n"
+        "Specialized analysis could not be applied.\n"
+        f"Reason: {reason}\n"
+        "\n"
+        "RAW TOOL RESULT\n"
+        "The following is the original capability output. "
+        "Inspect it directly instead of assuming that analysis "
+        "was successful.\n\n"
+        f"{rendered_result}"
+    )
+
 
 def format_critic_advice(advice: CriticAdvice) -> str:
     parts = [f"Advice: {advice.advice}"]
