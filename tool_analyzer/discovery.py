@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from pathlib import PurePosixPath
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 
 from models import ListDirectoryResult, SearchFilesResult
@@ -159,11 +159,9 @@ def analyze_list_directory_result(
     *,
     source_artifact_id: str | None = None,
 ) -> DirectoryListingAnalysis:
-    """Build a complete parent-linked representation of list_directory output.
+    """Build a deterministic parent-linked representation of list_directory output.
 
-    Every returned path is represented. No ranking, sampling, or
-    disclosure limit is applied.
-
+    Every returned path is represented in the analysis model.
     The original result is never modified.
     """
 
@@ -184,33 +182,67 @@ def analyze_list_directory_result(
         )
 
     root = result.resolved_path
+
     if result.success and not root:
         raise ValueError("Successful list_directory result is missing resolved_path.")
 
+    if result.success:
+        if result.truncated == result.complete:
+            raise ValueError(
+                "Invalid list_directory result: successful results must "
+                "have truncated=True exactly when complete=False."
+            )
+
+        if (
+            result.total_directories < result.returned_directories
+            or result.total_files < result.returned_files
+        ):
+            raise ValueError(
+                "Invalid list_directory result: discovered totals cannot "
+                "be smaller than the number of returned entries."
+            )
+
+        if result.complete and (
+            result.total_directories != result.returned_directories
+            or result.total_files != result.returned_files
+        ):
+            raise ValueError(
+                "Invalid list_directory result: complete results must "
+                "have totals equal to their returned-entry counts."
+            )
+
     entries: list[DirectoryTreeEntry] = []
     directory_ids: dict[str, str] = {}
+    seen_paths: set[str] = set()
 
     def parse_relative_path(path: str) -> PurePosixPath:
         relative = PurePosixPath(path)
+        windows_path = PureWindowsPath(path)
 
         if (
             not path
             or relative.is_absolute()
+            or windows_path.is_absolute()
+            or windows_path.drive
             or ".." in relative.parts
             or not relative.parts
             or relative == PurePosixPath(".")
+            or relative.as_posix() != path
         ):
             raise ValueError(
                 f"Invalid relative path in list_directory result: {path!r}"
             )
 
+        normalized = relative.as_posix()
+
+        if normalized in seen_paths:
+            raise ValueError(f"Duplicate path in list_directory result: {path!r}")
+
+        seen_paths.add(normalized)
         return relative
 
-    # ----------------------------------------------------------
-    # Directories
-    # ----------------------------------------------------------
-
-    for directory in result.directories:
+    # Directories must be ordered parent-before-child by the producer.
+    for directory_index, directory in enumerate(result.directories):
         relative = parse_relative_path(directory)
         parent_path = relative.parent.as_posix()
 
@@ -226,7 +258,7 @@ def analyze_list_directory_result(
                     f"child directory {directory!r}."
                 )
 
-        entry_id = f"D{len(directory_ids)}"
+        entry_id = f"D{directory_index}"
 
         entries.append(
             DirectoryTreeEntry(
@@ -239,11 +271,9 @@ def analyze_list_directory_result(
 
         directory_ids[relative.as_posix()] = entry_id
 
-    # ----------------------------------------------------------
-    # Files
-    # ----------------------------------------------------------
-
-    for file in result.files:
+    # Files are processed after directories because the source result
+    # stores them in a separate collection.
+    for file_index, file in enumerate(result.files):
         relative = parse_relative_path(file)
         parent_path = relative.parent.as_posix()
 
@@ -258,13 +288,9 @@ def analyze_list_directory_result(
                     f"{parent_path!r} was not returned for file {file!r}."
                 )
 
-        entry_id = f"F{sum(
-            entry.entry_type == "file" for entry in entries
-        )}"
-
         entries.append(
             DirectoryTreeEntry(
-                id=entry_id,
+                id=f"F{file_index}",
                 name=relative.name,
                 parent_id=parent_id,
                 entry_type="file",
