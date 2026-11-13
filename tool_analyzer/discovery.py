@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from collections import OrderedDict
@@ -64,9 +63,7 @@ def analyze_search_files_result(
         disclosed_paths=disclosed_paths,
         directory_groups=directory_groups,
         returned_count=result.returned_count,
-        undisclosed_returned_count=(
-            result.returned_count - len(disclosed_paths)
-        ),
+        undisclosed_returned_count=(result.returned_count - len(disclosed_paths)),
         total_matches=result.total_matches,
         complete=result.complete,
         truncated=result.truncated,
@@ -116,9 +113,7 @@ def format_discovery_analysis(
 
     if analysis.disclosed_paths:
         lines.append("")
-        lines.append(
-            f"Top ranked paths (showing {len(analysis.disclosed_paths)}):"
-        )
+        lines.append(f"Top ranked paths (showing {len(analysis.disclosed_paths)}):")
 
         for index, match in enumerate(analysis.disclosed_paths, start=1):
             lines.append(
@@ -148,20 +143,13 @@ def format_discovery_analysis(
     if analysis.traversal_errors:
         lines.append("")
         lines.append("Traversal errors:")
-        lines.extend(
-            f"- {error}" for error in analysis.traversal_errors
-        )
+        lines.extend(f"- {error}" for error in analysis.traversal_errors)
 
     if analysis.skipped_symlinks:
-        lines.append(
-            f"Skipped symbolic links: {analysis.skipped_symlinks}"
-        )
+        lines.append(f"Skipped symbolic links: {analysis.skipped_symlinks}")
 
     if analysis.source_artifact_id:
-        lines.append(
-            "Original result artifact: "
-            f"{analysis.source_artifact_id}"
-        )
+        lines.append("Original result artifact: " f"{analysis.source_artifact_id}")
 
     return "\n".join(lines)
 
@@ -196,10 +184,8 @@ def analyze_list_directory_result(
         )
 
     root = result.resolved_path
-    if not root:
-        raise ValueError(
-            "Cannot analyze list_directory result without resolved_path."
-        )
+    if result.success and not root:
+        raise ValueError("Successful list_directory result is missing resolved_path.")
 
     entries: list[DirectoryTreeEntry] = []
     directory_ids: dict[str, str] = {}
@@ -311,7 +297,7 @@ def format_list_directory_analysis(
 
     lines = [
         "Discovery analysis: list_directory",
-        f"Root: {analysis.root}",
+        f"Root: {analysis.root or 'Unavailable'}",
         f"Listing success: {analysis.success}",
         "",
         "DIRECTORY TREE",
@@ -319,9 +305,7 @@ def format_list_directory_analysis(
     ]
 
     for entry in analysis.entries:
-        lines.append(
-            f"{entry.id} <- {entry.parent_id}: {entry.name}"
-        )
+        lines.append(f"{entry.id} <- {entry.parent_id}: {entry.name}")
 
     lines.extend(
         [
@@ -373,18 +357,12 @@ def format_list_directory_analysis(
     if analysis.traversal_errors:
         lines.append("")
         lines.append("TRAVERSAL ERRORS")
-        lines.extend(
-            f"- {error}" for error in analysis.traversal_errors
-        )
+        lines.extend(f"- {error}" for error in analysis.traversal_errors)
 
     if analysis.skipped_symlinks:
-        lines.append(
-            f"Skipped symbolic links: {analysis.skipped_symlinks}"
-        )
+        lines.append(f"Skipped symbolic links: {analysis.skipped_symlinks}")
 
     if analysis.source_artifact_id:
-        lines.append(
-            f"Original result artifact: {analysis.source_artifact_id}"
-        )
+        lines.append(f"Original result artifact: {analysis.source_artifact_id}")
 
     return "\n".join(lines)

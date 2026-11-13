@@ -151,8 +151,9 @@ async def agentic_loop_tool_analyzer_node(
 ) -> dict:
     """Analyze a pending capability result using its registered analyzer.
 
-    Specialized analysis is currently implemented only for search_files.
-    Other registered families retain the explicit fallback observation.
+    Specialized discovery analysis is implemented for search_files
+    and list_directory. Other registered capabilities retain the
+    explicit fallback observation.
     """
 
     pending_sequence = state.get("agentic_loop_pending_tool_result_sequence")

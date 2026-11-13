@@ -32,7 +32,7 @@ from runtime.agentic_loop_models import (
     AgenticLoopAction,
     AgenticLoopDecision,
 )
-from tool_analyzer.discovery import analyze_search_files_result, format_discovery_analysis
+from tool_analyzer.discovery import analyze_list_directory_result, analyze_search_files_result, format_discovery_analysis, format_list_directory_analysis
 from tool_analyzer.registry import ToolAnalyzerFamily, resolve_tool_analyzer_family
 from tools import TOOLS
 
@@ -174,6 +174,30 @@ def analyze_capability_result(
                     "result remains preserved separately.\n"
                     f"Analysis error: {type(exc).__name__}: {exc}"
                 )
+        
+        elif (
+            family == ToolAnalyzerFamily.DISCOVERY
+            and tool_result.tool_name == "list_directory"
+        ):
+            source_result = raw_result
+            if source_result is None:
+                source_result = tool_result.raw_result
+
+            try:
+                analysis = analyze_list_directory_result(
+                    source_result,
+                    source_artifact_id=artifact_id,
+                )
+                content = format_list_directory_analysis(analysis)
+
+            except Exception as exc:
+                content = (
+                    f"Capability: {tool_result.tool_name}\n"
+                    "Directory-listing analysis failed. The original "
+                    "capability result remains preserved separately.\n"
+                    f"Analysis error: {type(exc).__name__}: {exc}"
+                )
+
 
         else:
             content = (

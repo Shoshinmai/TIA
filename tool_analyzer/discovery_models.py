@@ -165,10 +165,10 @@ class DirectoryListingAnalysis(BaseModel):
         description="Whether the original listing operation succeeded.",
     )
 
-    root: str = Field(
-        min_length=1,
-        description="Resolved absolute path of the inspected directory.",
-    )
+    root: str | None = Field(
+    default=None,
+    description="Resolved absolute path of the inspected directory, when available.",
+)
 
     entries: list[DirectoryTreeEntry] = Field(
         default_factory=list,
