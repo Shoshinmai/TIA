@@ -567,16 +567,6 @@ class ReadFileInput(BaseModel):
         )
     )
 
-    start_line: int = Field(
-        default=1,
-        ge=1,
-        description=(
-            "First line to read. Lines are 1-indexed. "
-            "Use the next_start_line returned by a previous "
-            "read_file call to continue reading a large file."
-        ),
-    )
-
 
 class GetFileInfoInput(BaseModel):
     """

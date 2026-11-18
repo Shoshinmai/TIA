@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 from datetime import datetime
 from pathlib import Path
 
@@ -11,18 +12,42 @@ from utils.location_resolver import get_workspace_root, resolve_location
 from utils.text_helpers import read_lines
 
 
+def _decode_complete_text(raw: bytes) -> tuple[str, str]:
+    """Decode complete file contents without silently replacing bytes."""
+
+    encodings = (
+        (codecs.BOM_UTF32_LE, "utf-32"),
+        (codecs.BOM_UTF32_BE, "utf-32"),
+        (codecs.BOM_UTF8, "utf-8-sig"),
+        (codecs.BOM_UTF16_LE, "utf-16"),
+        (codecs.BOM_UTF16_BE, "utf-16"),
+    )
+
+    for bom, encoding in encodings:
+        if raw.startswith(bom):
+            try:
+                return raw.decode(encoding, errors="strict"), encoding
+            except UnicodeDecodeError as exc:
+                raise UnicodeDecodeError(
+                    exc.encoding,
+                    exc.object,
+                    exc.start,
+                    exc.end,
+                    exc.reason,
+                ) from exc
+
+    # Reject likely binary content rather than interpreting it as text.
+    if b"\x00" in raw[:8192]:
+        raise ValueError("unsupported_binary")
+
+    return raw.decode("utf-8", errors="strict"), "utf-8"
+
+
 def _read_file_sync(
     path: str,
-    start_line: int = 1,
     workspace_root: Path | None = None,
 ) -> dict:
-    """
-    Synchronous implementation of read_file.
-
-    This function contains the existing filesystem behavior.
-    It is executed through asyncio.to_thread() by the public
-    async tool wrapper.
-    """
+    """Read and return the complete contents of a text file."""
 
     try:
         resolved_path = resolve_location(path, workspace_root)
@@ -31,50 +56,110 @@ def _read_file_sync(
         return {
             "success": False,
             "path": path,
+            "error_code": "not_found",
             "error": str(exc),
         }
 
-    if not resolved_path.is_file():
+    try:
+        if not resolved_path.is_file():
+            return {
+                "success": False,
+                "path": str(resolved_path),
+                "error_code": "not_a_file",
+                "error": "The supplied path is not a regular file.",
+            }
+
+        raw = resolved_path.read_bytes()
+        size_bytes = len(raw)
+
+        try:
+            content, encoding = _decode_complete_text(raw)
+
+        except UnicodeDecodeError as exc:
+            return {
+                "success": False,
+                "path": str(resolved_path),
+                "error_code": "decoding_error",
+                "error": (
+                    "The file could not be decoded using the supported "
+                    f"encoding rules: {exc}"
+                ),
+            }
+        except ValueError as exc:
+            if str(exc) == "unsupported_binary":
+                return {
+                    "success": False,
+                    "path": str(resolved_path),
+                    "error_code": "unsupported_file_type",
+                    "error": "The file appears to contain binary data.",
+                }
+            raise
+
+        return {
+            "success": True,
+            "path": str(resolved_path),
+            "content": content,
+            "encoding": encoding,
+            "size_bytes": size_bytes,
+            "total_lines": len(content.splitlines()),
+            "content_complete": True,
+        }
+
+    except FileNotFoundError:
         return {
             "success": False,
             "path": str(resolved_path),
-            "error": "Path is not a file.",
+            "error_code": "not_found",
+            "error": "The file no longer exists.",
         }
 
-    result = read_lines(
-        path=resolved_path,
-        start_line=start_line,
-    )
-
-    if result is None:
+    except PermissionError:
         return {
             "success": False,
             "path": str(resolved_path),
-            "error": "Unable to read file.",
+            "error_code": "permission_denied",
+            "error": "Permission denied while reading the file.",
         }
 
-    return {
-        "success": True,
-        "path": str(resolved_path),
-        **result,
-    }
+    except IsADirectoryError:
+        return {
+            "success": False,
+            "path": str(resolved_path),
+            "error_code": "not_a_file",
+            "error": "The supplied path is a directory.",
+        }
+
+    except MemoryError:
+        return {
+            "success": False,
+            "path": str(resolved_path),
+            "error_code": "resource_exhausted",
+            "error": "Insufficient memory to read the complete file.",
+        }
+
+    except OSError as exc:
+        return {
+            "success": False,
+            "path": str(resolved_path),
+            "error_code": "io_error",
+            "error": str(exc),
+        }
 
 
 @tool(args_schema=ReadFileInput)
-async def read_file(
-    path: str,
-    start_line: int = 1,
-) -> dict:
+async def read_file(path: str) -> dict:
     """
-    Read a bounded window of lines from a text file asynchronously.
+    Read the complete contents of a text file.
 
-    The filesystem operation itself runs outside the event loop.
+    No line, character, or file-size truncation is applied.
+    Binary and undecodable files return explicit errors.
     """
 
     return await asyncio.to_thread(
-        _read_file_sync, path, start_line, get_workspace_root()
+        _read_file_sync,
+        path,
+        get_workspace_root(),
     )
-
 
 def _get_file_info_sync(
     path: str,

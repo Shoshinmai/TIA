@@ -27,7 +27,8 @@ async def main() -> None:
     thread_id = f"agentic-loop-{uuid.uuid4().hex[:12]}"
 
     initial_state = {
-        "goal": """list the installed games on the steam app. take the critic help is necessary.""",
+        # "goal": """Check which process is currently listening on port 8080, identify its PID, and tell me the full command that started it.""",
+        "goal": """Run the project `D:\\AI_dev\\ML\\project\\Agents\\Multi-Agent-DataBase-Handler`""",
         # "goal": """Inspect the current project directory,identify the main application entry point,
         #            and explain what it does. Use the available capabilities to gather evidence before responding.""",
         "workspace": os.getcwd(),
