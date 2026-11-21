@@ -28,7 +28,7 @@ async def main() -> None:
 
     initial_state = {
         # "goal": """Check which process is currently listening on port 8080, identify its PID, and tell me the full command that started it.""",
-        "goal": """Run the project `D:\\AI_dev\\ML\\project\\Agents\\Multi-Agent-DataBase-Handler`""",
+        "goal": """in the current project inspect the reading tool and tell me is it beneficial to add indexing in it?""",
         # "goal": """Inspect the current project directory,identify the main application entry point,
         #            and explain what it does. Use the available capabilities to gather evidence before responding.""",
         "workspace": os.getcwd(),
