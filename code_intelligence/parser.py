@@ -7,6 +7,7 @@ from code_intelligence.models import (
     ParseDiagnostic,
     PythonParseResult,
 )
+from code_intelligence.symbols import extract_symbols
 
 
 _PYTHON_LANGUAGE = Language(tree_sitter_python.language())
@@ -14,19 +15,13 @@ _PYTHON_LANGUAGE = Language(tree_sitter_python.language())
 
 def create_python_parser() -> Parser:
     """Create an independent Tree-sitter Python parser."""
-
     parser = Parser()
     parser.language = _PYTHON_LANGUAGE
     return parser
 
 
 def parse_python_source(source: str) -> PythonParseResult:
-    """Parse Python source and report syntax diagnostics.
-
-    Tree-sitter can produce a partial syntax tree for invalid source.
-    We preserve that tree's valid structural information and return
-    diagnostics instead of treating every syntax error as a parser crash.
-    """
+    """Parse Python source and extract structural symbols."""
 
     source_bytes = source.encode("utf-8")
     parser = create_python_parser()
@@ -54,9 +49,7 @@ def parse_python_source(source: str) -> PythonParseResult:
                     kind="missing_node",
                     start_line=node.start_point.row + 1,
                     end_line=node.start_point.row + 1,
-                    message=(
-                        f"Expected syntax node '{node.type}' is missing."
-                    ),
+                    message=f"Expected syntax node '{node.type}' is missing.",
                 )
             )
 
@@ -65,8 +58,14 @@ def parse_python_source(source: str) -> PythonParseResult:
 
     visit(tree.root_node)
 
+    symbols = extract_symbols(
+        root=tree.root_node,
+        source=source_bytes,
+    )
+
     return PythonParseResult(
         success=not tree.root_node.has_error,
+        symbols=symbols,
         diagnostics=diagnostics,
         total_lines=len(source.splitlines()),
     )

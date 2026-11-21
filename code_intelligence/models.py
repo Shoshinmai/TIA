@@ -67,3 +67,51 @@ class CodeReadResult(BaseModel):
     qualified_name: str | None = None
     error_code: str | None = None
     error: str | None = None
+
+class CodeInspectionInput(BaseModel):
+    """Input for inspecting Python source structure."""
+
+    path: str = Field(
+        min_length=1,
+        description=(
+            "Python file path relative to the project workspace, "
+            "or an absolute path inside that workspace."
+        ),
+    )
+
+    qualified_name: str | None = Field(
+        default=None,
+        description=(
+            "Optional exact qualified symbol name. When omitted, "
+            "return the complete structural outline."
+        ),
+    )
+
+
+class CodeReadingInput(BaseModel):
+    """Input for retrieving a specific Python source region."""
+
+    path: str = Field(
+        min_length=1,
+        description="Python source file inside the project workspace.",
+    )
+
+    qualified_name: str | None = Field(
+        default=None,
+        description=(
+            "Exact qualified symbol to retrieve, for example "
+            "'Agent.run' or 'Agent._build_context'."
+        ),
+    )
+
+    start_line: int | None = Field(
+        default=None,
+        ge=1,
+        description="First line of a one-based inclusive source range.",
+    )
+
+    end_line: int | None = Field(
+        default=None,
+        ge=1,
+        description="Last line of a one-based inclusive source range.",
+    )

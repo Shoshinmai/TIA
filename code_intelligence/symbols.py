@@ -42,25 +42,6 @@ def _definition_name(
     name_node = _direct_child(node, "identifier")
     return _node_text(source, name_node)
 
-
-def _decorators(
-    node: Node,
-    source: bytes,
-) -> list[str]:
-    decorators: list[str] = []
-
-    for child in node.children:
-        if child.type == "decorated_definition":
-            continue
-
-        if child.type == "decorator":
-            text = _node_text(source, child)
-            if text:
-                decorators.append(text)
-
-    return decorators
-
-
 def _docstring(
     node: Node,
     source: bytes,
