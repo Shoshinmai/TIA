@@ -258,17 +258,39 @@ async def code_intelligence(
     start_line: int | None = None,
     end_line: int | None = None,
 ) -> dict:
+    
     """
-    Inspect source structure or retrieve source code.
+    Inspect source structure or retrieve exact source code.
 
-    Use operation='inspect' to retrieve symbols, imports, source ranges,
-    decorators, docstrings and syntax diagnostics.
+    This capability supports two operations:
 
-    Use operation='read' with qualified_name to retrieve a symbol, or
-    with start_line and end_line to retrieve an inclusive line range.
+    operation="inspect":
+        Discover structural information about a source file, including
+        classes, functions, methods, qualified names, source ranges,
+        imports, decorators, docstrings, and syntax diagnostics.
+
+        An optional qualified_name filters the returned symbols using
+        an exact qualified-name match.
+
+    operation="read":
+        Retrieve source code using either:
+        - qualified_name: the exact qualified name of a discovered symbol.
+        - start_line and end_line: a one-based, inclusive source range.
+
+    Recommended workflow:
+        1. Use inspect to discover symbols and their qualified names.
+        2. Use read with the exact qualified name to retrieve an
+           implementation when its source is needed.
+        3. Use line ranges when a specific section is needed instead.
+
+    Do not assume qualified names. Discover them through inspection
+    before requesting symbol source.
 
     Paths must resolve to files inside the active project workspace.
+    Unsupported languages, missing files, ambiguous symbols, and
+    invalid source ranges are returned as structured errors.
     """
+
     return await asyncio.to_thread(
         _execute_code_intelligence,
         operation=operation,

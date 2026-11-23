@@ -7,6 +7,7 @@ from .shell import run_terminal
 
 TOOLS = [
     search_files,
+    code_intelligence,
     run_terminal,
     list_directory,
     search_content,
@@ -14,5 +15,4 @@ TOOLS = [
     get_file_info,
     search_artifact,
     read_artifact,
-    code_intelligence,
 ]

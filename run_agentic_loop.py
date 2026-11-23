@@ -28,7 +28,24 @@ async def main() -> None:
 
     initial_state = {
         # "goal": """Check which process is currently listening on port 8080, identify its PID, and tell me the full command that started it.""",
-        "goal": """in the current project inspect the reading tool and tell me is it beneficial to add indexing in it?""",
+        "goal": """
+Identify how the code_intelligence capability is registered and
+explain how its workspace context reaches the tool during execution.
+
+Investigate the actual source code.
+
+Trace these relationships:
+1. Where code_intelligence is added to the available capabilities.
+2. How the agent receives its description and input schema.
+3. How the selected capability is invoked.
+4. How the workspace root is propagated to the capability.
+5. How code_intelligence obtains and uses that workspace root.
+
+Use structural inspection to discover relevant symbols and targeted
+source retrieval to verify their implementations.
+
+Do not assume the architecture from filenames or comments alone.
+""",
         # "goal": """Inspect the current project directory,identify the main application entry point,
         #            and explain what it does. Use the available capabilities to gather evidence before responding.""",
         "workspace": os.getcwd(),
