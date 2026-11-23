@@ -1,5 +1,6 @@
+
 from tools.artifact import read_artifact, search_artifact
-from tools.code_intelligence import inspect_python_code, read_python_code
+from tools.code_intelligence import code_intelligence
 from tools.reading import get_file_info, read_file
 from .discovery import list_directory, search_content, search_files
 from .shell import run_terminal
@@ -13,6 +14,5 @@ TOOLS = [
     get_file_info,
     search_artifact,
     read_artifact,
-    inspect_python_code,
-    read_python_code,
+    code_intelligence,
 ]

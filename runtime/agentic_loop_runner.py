@@ -203,6 +203,7 @@ async def run_agentic_loop(
                 sequence=next_sequence,
                 goal=resolved_goal,
                 active_memory=working_state["active_memory"],
+                workspace_root=working_state.get("workspace"),
             )
             if step.active_memory is not None:
                 working_state["active_memory"] = step.active_memory

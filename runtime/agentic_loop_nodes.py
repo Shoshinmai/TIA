@@ -123,6 +123,7 @@ async def agentic_loop_capability_node(state: TerminalState) -> dict:
         sequence=next_sequence,
         goal=_goal(state),
         active_memory=state.get("active_memory"),
+        workspace_root=state.get("workspace"),
     )
 
     updated_actions = [

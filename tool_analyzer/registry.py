@@ -19,9 +19,6 @@ TOOL_ANALYZER_REGISTRY: dict[str, ToolAnalyzerFamily] = {
     # File Inspection Analyzer
     "read_file": ToolAnalyzerFamily.FILE_INSPECTION,
     "get_file_info": ToolAnalyzerFamily.FILE_INSPECTION,
-    # Code Intelligence
-    "inspect_python_code": ToolAnalyzerFamily.FILE_INSPECTION,
-    "read_python_code": ToolAnalyzerFamily.FILE_INSPECTION,
 
     # Terminal Analyzer
     "run_terminal": ToolAnalyzerFamily.TERMINAL,

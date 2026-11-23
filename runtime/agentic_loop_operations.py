@@ -40,6 +40,7 @@ from tool_analyzer.discovery import (
 )
 from tool_analyzer.registry import ToolAnalyzerFamily, resolve_tool_analyzer_family
 from tools import TOOLS
+from utils.location_resolver import workspace_scope
 
 DEFAULT_AGENTIC_LOOP_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
 # DEFAULT_AGENTIC_LOOP_MODEL = "nvidia/nemotron-3-super-120b-a12b"
@@ -404,6 +405,7 @@ async def execute_selected_capability(
     sequence: int,
     goal: str | None = None,
     active_memory: Any | None = None,
+    workspace_root: str | None = None,
 ) -> CapabilityStep:
     """Execute one capability and return its factual observation.
 
@@ -445,7 +447,8 @@ async def execute_selected_capability(
         )
     else:
         try:
-            result = await capability.ainvoke(decision.arguments)
+            with workspace_scope(workspace_root):
+                result = await capability.ainvoke(decision.arguments)
             result_was_returned = True
             raw_result = result
 
