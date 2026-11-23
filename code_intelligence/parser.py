@@ -83,20 +83,49 @@ LANGUAGE_ADAPTERS: dict[str, LanguageAdapter] = {}
 
 
 def register_language_adapter(adapter: LanguageAdapter) -> None:
-    """Register an adapter by each of its file extensions."""
-    for extension in adapter.extensions:
-        normalized = extension.lower()
-        if not normalized.startswith("."):
-            raise ValueError(
-                f"Language adapter extensions must start with '.': {extension}"
-            )
+    """Register an adapter by each of its file extensions.
 
-        if normalized in LANGUAGE_ADAPTERS:
-            raise ValueError(
-                f"A language adapter is already registered for {normalized}."
-            )
+    Validate the complete registration before mutating the registry.
+    """
+    if not adapter.extensions:
+        raise ValueError("A language adapter must declare at least one extension.")
 
-        LANGUAGE_ADAPTERS[normalized] = adapter
+    normalized_extensions = tuple(
+        extension.lower()
+        for extension in adapter.extensions
+    )
+
+    invalid_extensions = [
+        extension
+        for extension in normalized_extensions
+        if not extension.startswith(".")
+    ]
+
+    if invalid_extensions:
+        raise ValueError(
+            "Language adapter extensions must start with '.': "
+            f"{invalid_extensions}"
+        )
+
+    if len(set(normalized_extensions)) != len(normalized_extensions):
+        raise ValueError(
+            "A language adapter cannot declare duplicate extensions."
+        )
+
+    existing_extensions = [
+        extension
+        for extension in normalized_extensions
+        if extension in LANGUAGE_ADAPTERS
+    ]
+
+    if existing_extensions:
+        raise ValueError(
+            "A language adapter is already registered for: "
+            f"{existing_extensions}"
+        )
+
+    for extension in normalized_extensions:
+        LANGUAGE_ADAPTERS[extension] = adapter
 
 
 def get_language_adapter(extension: str) -> LanguageAdapter | None:

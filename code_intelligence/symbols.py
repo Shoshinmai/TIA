@@ -212,19 +212,30 @@ def extract_imports(root: Node, source: bytes) -> list[CodeImport]:
     visit(root)
     return imports
 
+class AmbiguousSymbolError(ValueError):
+    """Raised when an exact qualified name resolves to multiple symbols."""
 
 def resolve_symbol(
     symbols: list[CodeSymbol],
     qualified_name: str,
 ) -> CodeSymbol | None:
-    """Resolve an exact qualified name; never use fuzzy matching."""
+    """Resolve an exact qualified name.
+
+    Returns None when no symbol matches and raises AmbiguousSymbolError
+    when multiple definitions share the same qualified name.
+    """
     matches = [
         symbol
         for symbol in symbols
         if symbol.qualified_name == qualified_name
     ]
 
-    if len(matches) != 1:
+    if not matches:
         return None
+
+    if len(matches) > 1:
+        raise AmbiguousSymbolError(
+            f"Multiple symbols match qualified name: {qualified_name}"
+        )
 
     return matches[0]

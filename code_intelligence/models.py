@@ -4,9 +4,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-
-CodeSymbolKind = Literal["class", "function", "method"]
-CodeImportKind = Literal["import", "from_import"]
 CodeOperation = Literal["inspect", "read"]
 
 

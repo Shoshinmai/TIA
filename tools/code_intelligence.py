@@ -17,7 +17,7 @@ from code_intelligence.parser import (
     get_language_adapter,
     parse_source,
 )
-from code_intelligence.symbols import resolve_symbol
+from code_intelligence.symbols import AmbiguousSymbolError, resolve_symbol
 from utils.location_resolver import (
     get_workspace_root,
     resolve_location,
@@ -71,6 +71,9 @@ def _read_source(path: Path, language: str) -> str:
 
 
 def _error_code(error: Exception) -> str:
+    if isinstance(error, AmbiguousSymbolError):
+        return "ambiguous_symbol"
+    
     known_codes = {
         "workspace_unavailable",
         "path_outside_workspace",
@@ -214,7 +217,7 @@ def _execute_code_intelligence(
     start_line: int | None,
     end_line: int | None,
 ) -> dict:
-    language = Path(path).suffix.lower().lstrip(".") or "unknown"
+    language = "unknown"
 
     try:
         resolved, language = _resolve_code_file(path)
