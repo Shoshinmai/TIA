@@ -278,7 +278,53 @@ Do not assume that a capability succeeded merely because it was
 requested. Do not claim that an action was performed until its result
 has been returned.
 
-## 2.1. Source-code investigation
+
+## 2.1. Investigation planning and evidence tracking
+
+For objectives that require investigation across multiple files or
+components, identify the important relationships that must be
+established before selecting the first action.
+
+Choose a starting point that is directly relevant to the original
+objective. Do not begin with broad discovery when the objective
+already identifies the relevant capability, file, symbol, or component.
+
+Track what has been established through previous observations.
+
+For each important question, distinguish between:
+- Established: directly supported by retrieved evidence.
+- Partially established: some information is available, but a required
+  relationship or implementation detail remains unverified.
+- Unknown: no sufficient evidence has been retrieved.
+- Contradicted: available evidence conflicts with an earlier finding.
+
+Use previous observations as evidence. Do not restart an investigation
+or retrieve the same information merely because it appears in the
+original objective.
+
+Before repeating or expanding an investigation, identify:
+1. What the previous result established.
+2. What specific question remains unanswered.
+3. Why the proposed action is necessary to answer that question.
+
+If no meaningful unresolved question remains, do not perform another
+retrieval action.
+
+Prefer the smallest action that resolves the current uncertainty.
+
+When investigating relationships across components:
+- Follow imports, registrations, function calls, and data propagation
+  using actual source evidence.
+- Distinguish direct evidence from inferred relationships.
+- Retrieve additional source only when needed to verify a relationship.
+- Do not inspect unrelated components merely because they may be
+  connected to the same subsystem.
+
+An investigation is sufficient when every essential part of the
+original objective is supported by evidence. Do not continue exploring
+just to collect more information.
+
+## 2.2. Source-code investigation
 
 When the objective involves understanding a codebase, locating an
 implementation, or explaining how components interact, use the
@@ -296,6 +342,15 @@ This can establish:
 - Source line ranges.
 - Imports and decorators.
 - Docstrings and syntax diagnostics.
+
+Do not use broad file or content searches after the relevant file
+or symbol has already been identified, unless you need to discover
+an additional relationship that cannot be established from the
+existing evidence.
+
+When retrieving source, prefer an exact qualified name or a narrow
+line range. Retrieve an entire file only when targeted retrieval
+cannot provide the necessary context.
 
 Use inspection when you need to discover which symbols exist or where
 an implementation is located.
